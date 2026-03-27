@@ -18,7 +18,7 @@ The central idea is simple: treat poems as points in an embedding space, let a u
 
 The same setup also supports:
 
-- phrase-to-poem search,
+- phrase-to-poem semantic search,
 - poem-to-poem similarity lookup,
 - poem-space and poet-space visualizations,
 - and benchmark comparisons between naive, optimized, and distributed implementations.
@@ -45,6 +45,39 @@ This makes the project a good vehicle for discussing:
 - and, as a stretch, GPU acceleration.
 
 The point is not to hide the fact that some versions are slow. The point is to use that slowness to motivate better implementations.
+
+## Environment setup
+
+On the cluster, do **not** modify the shared Spack course environment just to install project-specific Python packages.
+Instead, activate the course environment first and then create a **project-local virtual environment** that reuses the shared site packages.
+
+Typical workflow:
+
+```bash
+source ~/161588/spack/share/spack/setup-env.sh
+spack env activate CS-2050
+bash scripts/bootstrap_venv.sh
+source .venv/bin/activate
+python scripts/check_env.py
+```
+
+What this does:
+
+- reuses packages already available through the course Spack environment,
+- installs missing Python dependencies into `.venv`,
+- avoids rebuilding the course environment,
+- and keeps the project self-contained.
+
+Optional app dependencies such as Streamlit can be installed with:
+
+```bash
+INSTALL_APP_REQUIREMENTS=1 bash scripts/bootstrap_venv.sh
+```
+
+The dependency files are split as:
+
+- `requirements-core.txt`: core runtime and benchmark dependencies
+- `requirements-app.txt`: optional Streamlit UI dependency
 
 ## Core workflow
 
@@ -124,6 +157,8 @@ src/poetry_gp/
     mpi.py               # distributed candidate scoring backend
 
 scripts/
+  bootstrap_venv.sh
+  check_env.py
   inspect_hf_poetry_dataset.py
   fetch_public_domain_poetry.py
   fetch_prepare_public_domain_poetry.py
@@ -182,7 +217,7 @@ python scripts/inspect_hf_poetry_dataset.py
 python scripts/fetch_prepare_public_domain_poetry.py --output data/poems.parquet
 ```
 
-This should preserve author/poet metadata in the canonical `poet` column when the source dataset provides it.
+This should preserve author/poet metadata in the canonical `poet` column.
 
 ## Embeddings and projections
 
@@ -315,6 +350,11 @@ bash scripts/slurm_submit_mpi.sh 4 scripts/bench_mpi_sweep.py --n-poems 5000,100
 ### Fastest path to a working proof of concept
 
 ```bash
+source ~/161588/spack/share/spack/setup-env.sh
+spack env activate CS-2050
+bash scripts/bootstrap_venv.sh
+source .venv/bin/activate
+python scripts/check_env.py
 python scripts/inspect_hf_poetry_dataset.py
 python scripts/fetch_prepare_public_domain_poetry.py --output data/poems.parquet
 python scripts/embed_poems.py --input data/poems.parquet --output data/embeddings.npy
@@ -325,6 +365,10 @@ python scripts/interactive_cli.py
 ### Fastest path to lecture-ready performance evidence
 
 ```bash
+source ~/161588/spack/share/spack/setup-env.sh
+spack env activate CS-2050
+bash scripts/bootstrap_venv.sh
+source .venv/bin/activate
 python scripts/bench_sweep.py --backends naive,blocked --n-poems 1000,2000,5000 --m-rated 5,10,20,40
 python scripts/plot_benchmarks_csv.py --input results/bench_results.csv --output results/bench_results.png
 mpirun -n 4 python scripts/bench_mpi_sweep.py --n-poems 5000,10000,20000 --m-rated 5,10,20,40
@@ -340,6 +384,7 @@ python scripts/plot_all_benchmarks.py --serial-input results/bench_results.csv -
 - blocked vectorized backend,
 - MPI candidate-scoring backend skeleton,
 - canonical dataset preparation utilities,
+- dependency bootstrap scripts for cluster use,
 - embedding / projection scripts,
 - phrase search,
 - poem-to-poem search,
