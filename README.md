@@ -1,52 +1,115 @@
 # poetry
 
-Poetry-space exploration with semantic embeddings, exact Gaussian-process preference modeling, and an HPC-oriented implementation ladder.
+A student-facing project on **poetry recommendation, exploration, and visualization** using
 
-This repository is being built for an HPC teaching module where the goal is not only to make the system useful, but to make the computational bottlenecks visible and measurable. The project treats poems as points in an embedding space, lets a user rate poems, and then uses a Gaussian process to drive both:
+- semantic poem embeddings,
+- an exact Gaussian-process preference model,
+- and an HPC-oriented implementation ladder.
 
-- **exploit**: recommend poems the model currently expects the user to like
-- **explore**: recommend poems whose rating would be most informative because the model is uncertain there
+This repository is meant to do two things at once:
+
+1. support a genuinely interesting poetry-exploration application, and
+2. make the computational bottlenecks visible enough that profiling, vectorization, batching, and distributed-memory methods feel necessary rather than decorative.
+
+The central idea is simple: treat poems as points in an embedding space, let a user rate poems, fit a Gaussian process over that space, and then use the posterior to choose the next poem either by
+
+- **exploit**: show a poem the model currently expects the user to like, or
+- **explore**: show a poem whose rating would be most informative because the model is uncertain there.
 
 The same setup also supports:
 
-- phrase-to-poem semantic search
-- poem and poet visualizations in 2D
-- timing/profiling comparisons across naive, optimized, and distributed implementations
+- phrase-to-poem search,
+- poem-to-poem similarity lookup,
+- poem-space and poet-space visualizations,
+- and benchmark comparisons between naive, optimized, and distributed implementations.
 
-## Core idea
+## Why this is an HPC project
 
-1. Build a corpus of poems with metadata such as title and poet.
+A useful first implementation is easy to write but expensive to run.
+
+At each interaction step, the system needs to:
+
+1. update an exact GP using the poems the user has rated so far,
+2. score a large corpus of candidate poems under the posterior,
+3. compute either posterior means, posterior variances, or both,
+4. choose the next poem,
+5. and optionally render heat maps over the 2D projection.
+
+This makes the project a good vehicle for discussing:
+
+- dense kernel computations,
+- blocking and vectorization,
+- exact GP linear algebra (kernel matrix, Cholesky factorization, triangular solves),
+- profiling and performance breakdowns,
+- distributed-memory scoring over a large candidate set,
+- and, as a stretch, GPU acceleration.
+
+The point is not to hide the fact that some versions are slow. The point is to use that slowness to motivate better implementations.
+
+## Core workflow
+
+1. Build a canonical poetry dataset with metadata.
 2. Embed each poem into a dense vector space.
-3. Project poems into 2D for visualization.
-4. Fit an exact GP on the poems the user has rated so far.
-5. Score the full corpus under the posterior.
-6. Recommend the next poem by exploit or explore.
-7. Visualize posterior preference or uncertainty as a heat map over the poem map.
+3. Project poems to 2D for visualization.
+4. Optionally build poet centroids for poet-level maps.
+5. Rate poems interactively.
+6. Fit an exact GP on the rated poems.
+7. Score all candidate poems.
+8. Recommend the next poem by exploit or explore.
+9. Profile the computation and compare implementations.
 
 ## Implementation ladder
 
-The repository is organized around a sequence of implementations that make good lecture material:
+The repository is organized around progressively better implementations of the same basic recommendation step.
 
-1. **Naive serial exact GP**
-   - intentionally simple
-   - scores one poem at a time
-   - useful as the correctness baseline and the "bad first implementation"
+### 1. Naive serial exact GP
 
-2. **Blocked / vectorized exact GP**
-   - batches candidate poems
-   - uses denser linear algebra structure
-   - the main optimized single-node baseline
+This version is intentionally straightforward.
 
-3. **MPI-distributed candidate scoring**
-   - distributes the candidate corpus across ranks
-   - keeps the rated-poem GP state small and shared
-   - the main distributed-memory scaling step
+Characteristics:
+- exact GP fit on the rated poems,
+- candidate poems scored one at a time,
+- useful as a correctness baseline and a “natural first attempt.”
 
-4. **Optional GPU extension**
-   - not yet implemented as a first-class backend
-   - natural future target for batched kernel and scoring computations
+Pedagogical value:
+- easy to understand,
+- likely to become slow enough that students can see the need for improvement.
 
-## Current repository layout
+### 2. Blocked / vectorized exact GP
+
+This is the main optimized single-node baseline.
+
+Characteristics:
+- candidates are scored in blocks,
+- more dense linear algebra structure is exposed,
+- Python overhead is reduced,
+- BLAS-backed operations do more of the work.
+
+Pedagogical value:
+- demonstrates how changing the computational structure can dramatically improve performance without changing the mathematics.
+
+### 3. MPI-distributed candidate scoring
+
+This is the main distributed-memory step.
+
+Characteristics:
+- the rated-poem GP state is small and shared,
+- the candidate corpus is distributed across ranks,
+- each rank scores its local shard,
+- results are reduced to choose the next poem.
+
+Pedagogical value:
+- connects naturally to prior MPI material,
+- shows how a large corpus-level scoring problem can be parallelized cleanly.
+
+### 4. GPU extension (future work)
+
+Not yet a first-class backend.
+
+Natural target:
+- batched kernel and scoring computations on large blocks of candidate poems.
+
+## Repository structure
 
 ```text
 src/poetry_gp/
@@ -70,6 +133,7 @@ scripts/
   build_poet_centroids.py
   project_poet_centroids_2d.py
   query_by_phrase.py
+  query_by_poem.py
   interactive_cli.py
   bench_step.py
   bench_sweep.py
@@ -77,6 +141,7 @@ scripts/
   bench_mpi_sweep.py
   plot_benchmarks.py
   plot_benchmarks_csv.py
+  plot_all_benchmarks.py
   plot_heatmap_demo.py
   plot_poet_map.py
   slurm_run.sh
@@ -84,19 +149,26 @@ scripts/
   slurm_submit_mpi.sh
 
 app/
-  streamlit_app.py       # early interactive demo UI
+  streamlit_app.py       # interactive demo UI
 ```
 
-## Data pipeline
+## Dataset and metadata
 
-The code expects a canonical poem table with the following columns:
+The code expects a canonical poem table with these columns:
 
 - `poem_id`
 - `title`
 - `poet`
 - `text`
 
-The canonicalization utilities try to map common source-schema variants such as `author`, `poet_name`, `content`, or `body` into this standard form.
+The schema-detection utilities try to map common source fields such as
+
+- `author`
+- `poet_name`
+- `content`
+- `body`
+
+into this standard form.
 
 ### Inspect the Hugging Face dataset first
 
@@ -110,16 +182,23 @@ python scripts/inspect_hf_poetry_dataset.py
 python scripts/fetch_prepare_public_domain_poetry.py --output data/poems.parquet
 ```
 
-This writes a cleaned parquet with canonical metadata columns. The expectation is that the source dataset includes author/poet metadata; if it does, that metadata is preserved in the canonical `poet` column.
+This should preserve author/poet metadata in the canonical `poet` column when the source dataset provides it.
 
-### Embeddings and 2D projection
+## Embeddings and projections
+
+### Build poem embeddings
 
 ```bash
 python scripts/embed_poems.py --input data/poems.parquet --output data/embeddings.npy
+```
+
+### Build a 2D poem projection
+
+```bash
 python scripts/project_poems_2d.py --input data/embeddings.npy --output data/proj2d.npy
 ```
 
-### Poet centroids
+### Build poet centroids and their 2D projection
 
 ```bash
 python scripts/build_poet_centroids.py --poems data/poems.parquet --embeddings data/embeddings.npy
@@ -128,7 +207,7 @@ python scripts/project_poet_centroids_2d.py --input data/poet_centroids.npy --ou
 
 These are useful for poet-level visualization and exploration.
 
-## Query and exploration tools
+## Ways to interact with the project
 
 ### Phrase-to-poem search
 
@@ -137,17 +216,24 @@ python scripts/query_by_phrase.py --text "melancholy bells over evening water" -
 python scripts/query_by_phrase.py --text "winter grief and birds" --poet dickinson --topk 5
 ```
 
+### Poem-to-poem similarity search
+
+```bash
+python scripts/query_by_poem.py --title "The Raven" --topk 10 --exclude-self
+python scripts/query_by_poem.py --poem-id 12345 --topk 10 --exclude-self
+```
+
 ### CLI exploration loop
 
 ```bash
 python scripts/interactive_cli.py
 ```
 
-This uses the blocked backend and lets you:
+This uses the blocked backend and lets you
 
-- rate the current poem as like / neutral / dislike
-- request the next poem via exploit or explore
-- inspect timing for each GP update step
+- rate the current poem as like / neutral / dislike,
+- ask for the next poem by exploit or explore,
+- and inspect timing for each GP update step.
 
 ### Streamlit app
 
@@ -155,21 +241,22 @@ This uses the blocked backend and lets you:
 streamlit run app/streamlit_app.py
 ```
 
-The app currently includes:
+The app currently supports:
 
-- 2D poem scatterplot
-- preference/uncertainty heatmap toggle
-- current poem display
-- rating buttons
-- exploit/explore buttons
-- rated-poem table
-- last-step timing display
+- **poem space** view,
+- **poet space** view,
+- preference vs uncertainty heatmap toggles,
+- jump-to-title controls,
+- rating buttons,
+- exploit/explore buttons,
+- a rated-poems table,
+- and a last-step timing display.
 
-It is still an early demo rather than a polished application.
+It is still an early demo, not a polished production interface.
 
 ## Benchmarking and profiling
 
-The repository includes scripts for generating timing evidence across implementations.
+The repository includes scripts for generating performance evidence across implementations.
 
 ### One-off benchmark
 
@@ -185,18 +272,27 @@ python scripts/bench_sweep.py --backends naive,blocked --n-poems 1000,2000,5000 
 python scripts/plot_benchmarks_csv.py --input results/bench_results.csv --output results/bench_results.png
 ```
 
-### MPI benchmark
+### MPI benchmark and sweep
 
 ```bash
 mpirun -n 4 python scripts/bench_mpi_step.py --n-poems 10000 --m-rated 20
 mpirun -n 4 python scripts/bench_mpi_sweep.py --n-poems 5000,10000,20000 --m-rated 5,10,20,40
 ```
 
-The intended lecture story is to show where time goes, identify the major hotspots, and then motivate each new improvement with actual measurements.
+### Combined plotting for serial + MPI results
+
+```bash
+python scripts/plot_all_benchmarks.py \
+  --serial-input results/bench_results.csv \
+  --mpi-input results/mpi_bench_results.csv \
+  --output results/all_benchmarks.png
+```
+
+The intended classroom use is to show where time goes, identify hotspots, and motivate each improvement with actual measurements.
 
 ## Running on a cluster
 
-Heavy jobs should **not** be run on the login node.
+Heavy embedding, benchmark, and MPI jobs should **not** be run on the login node.
 
 This repository includes Slurm wrappers:
 
@@ -204,7 +300,7 @@ This repository includes Slurm wrappers:
 - `scripts/slurm_submit.sh`
 - `scripts/slurm_submit_mpi.sh`
 
-See `RUNNING_ON_CLUSTER.md` for concrete examples and recommended usage.
+See `RUNNING_ON_CLUSTER.md` for examples and usage details.
 
 Typical examples:
 
@@ -214,35 +310,9 @@ bash scripts/slurm_submit.sh scripts/bench_sweep.py --backends naive,blocked --n
 bash scripts/slurm_submit_mpi.sh 4 scripts/bench_mpi_sweep.py --n-poems 5000,10000,20000 --m-rated 5,10,20,40
 ```
 
-## What is implemented vs what is still rough
+## Suggested student workflows
 
-### Implemented now
-
-- exact GP fitting via Cholesky
-- naive serial backend
-- blocked vectorized backend
-- MPI candidate-scoring backend skeleton
-- canonical dataset preparation utilities
-- embedding / projection scripts
-- phrase search
-- poet centroid construction
-- benchmark scripts
-- basic heatmap rendering
-- early Streamlit UI
-- Slurm wrappers and cluster guidance
-
-### Still rough or incomplete
-
-- no hardened GPU backend yet
-- MPI path needs more real-cluster validation
-- benchmark plots are still minimal
-- the Streamlit app needs cleanup and richer controls
-- poem-to-poem search by title/id would still be useful
-- full cluster-specific environment setup instructions may need tailoring to the actual system
-
-## Suggested near-term workflow
-
-If you want the fastest path to a working proof of concept:
+### Fastest path to a working proof of concept
 
 ```bash
 python scripts/inspect_hf_poetry_dataset.py
@@ -252,20 +322,51 @@ python scripts/project_poems_2d.py --input data/embeddings.npy --output data/pro
 python scripts/interactive_cli.py
 ```
 
-If you want the fastest path to lecture-ready performance evidence:
+### Fastest path to lecture-ready performance evidence
 
 ```bash
 python scripts/bench_sweep.py --backends naive,blocked --n-poems 1000,2000,5000 --m-rated 5,10,20,40
 python scripts/plot_benchmarks_csv.py --input results/bench_results.csv --output results/bench_results.png
 mpirun -n 4 python scripts/bench_mpi_sweep.py --n-poems 5000,10000,20000 --m-rated 5,10,20,40
+python scripts/plot_all_benchmarks.py --serial-input results/bench_results.csv --mpi-input results/mpi_bench_results.csv
 ```
+
+## What is implemented vs still rough
+
+### Implemented now
+
+- exact GP fitting via Cholesky,
+- naive serial backend,
+- blocked vectorized backend,
+- MPI candidate-scoring backend skeleton,
+- canonical dataset preparation utilities,
+- embedding / projection scripts,
+- phrase search,
+- poem-to-poem search,
+- poet centroid construction,
+- benchmark scripts,
+- combined benchmark plotting,
+- basic heatmap rendering,
+- early Streamlit UI,
+- Slurm wrappers and cluster guidance.
+
+### Still rough or incomplete
+
+- no hardened GPU backend yet,
+- MPI path still needs more real-cluster validation,
+- benchmark plots are still deliberately simple,
+- the Streamlit app could use richer search/filter controls,
+- direct poem-neighbor panels inside the app would still be useful,
+- and cluster-specific environment setup instructions may need adjustment for the local system.
 
 ## Pedagogical intent
 
-This project is not trying to hide the fact that some approaches are too slow or too memory-hungry. That is part of the point. The system is meant to support a useful and interesting poetry-exploration application while also making room for:
+This project is not trying to disguise the fact that some implementations are too slow or too memory-hungry. That is part of the point.
 
-- naive serial baselines that are easy to understand but too slow
-- blocked and vectorized improvements
-- distributed-memory scaling
-- profiling and performance analysis
-- discussion of where dense linear algebra enters recommendation and Bayesian search over poem space
+The repository is meant to support a useful and interesting poetry-exploration application while also making room for discussion of:
+
+- naive serial baselines,
+- blocked and vectorized improvements,
+- distributed-memory scaling,
+- profiling and performance analysis,
+- and the role of dense linear algebra inside Bayesian search over poem space.
