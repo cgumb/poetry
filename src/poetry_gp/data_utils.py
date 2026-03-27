@@ -30,8 +30,8 @@ def _pick_column(df: pd.DataFrame, candidates: list[str], fallback: str | None =
 
 def detect_columns(df: pd.DataFrame) -> CanonicalColumns:
     text_col = _pick_column(df, TEXT_CANDIDATES)
-    title_col = _pick_column(df, TITLE_CANDIDATES, fallback=text_col)
-    poet_col = _pick_column(df, POET_CANDIDATES, fallback=title_col)
+    title_col = _pick_column(df, TITLE_CANDIDATES, fallback="_missing_title")
+    poet_col = _pick_column(df, POET_CANDIDATES, fallback="_missing_poet")
     id_col = _pick_column(df, ID_CANDIDATES, fallback="_row_id")
     return CanonicalColumns(id_col=id_col, title_col=title_col, poet_col=poet_col, text_col=text_col)
 
@@ -39,9 +39,20 @@ def detect_columns(df: pd.DataFrame) -> CanonicalColumns:
 def canonicalize_poems(df: pd.DataFrame) -> tuple[pd.DataFrame, CanonicalColumns]:
     df = df.copy()
     cols = detect_columns(df)
+
     if cols.id_col == "_row_id":
         df["_row_id"] = range(len(df))
-        cols = CanonicalColumns(id_col="_row_id", title_col=cols.title_col, poet_col=cols.poet_col, text_col=cols.text_col)
+    if cols.title_col == "_missing_title":
+        df["_missing_title"] = ""
+    if cols.poet_col == "_missing_poet":
+        df["_missing_poet"] = ""
+
+    cols = CanonicalColumns(
+        id_col="_row_id" if cols.id_col == "_row_id" else cols.id_col,
+        title_col="_missing_title" if cols.title_col == "_missing_title" else cols.title_col,
+        poet_col="_missing_poet" if cols.poet_col == "_missing_poet" else cols.poet_col,
+        text_col=cols.text_col,
+    )
 
     out = pd.DataFrame(
         {
