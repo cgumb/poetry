@@ -10,19 +10,19 @@
     "license_family": "public_domain"
   },
   {
-    "name": "poetry_foundation_poems",
+    "name": "poetry_foundation_jnb666",
     "kind": "huggingface",
-    "location": "suayptalha/Poetry-Foundation-Poems",
-    "split": "train",
+    "location": "jnb666/poems",
+    "split": "train+val",
     "enabled": true,
     "priority": 20,
     "language": "en",
     "license_family": "poetry_foundation_scrape"
   },
   {
-    "name": "poetry_foundation_data_alt",
+    "name": "poetry_foundation_poems_alt",
     "kind": "huggingface",
-    "location": "shahules786/PoetryFoundationData",
+    "location": "suayptalha/Poetry-Foundation-Poems",
     "split": "train",
     "enabled": false,
     "priority": 30,
@@ -30,9 +30,9 @@
     "license_family": "poetry_foundation_scrape"
   },
   {
-    "name": "poetry_foundation_jnb666_alt",
+    "name": "poetry_foundation_data_alt",
     "kind": "huggingface",
-    "location": "jnb666/poems",
+    "location": "shahules786/PoetryFoundationData",
     "split": "train",
     "enabled": false,
     "priority": 40,
