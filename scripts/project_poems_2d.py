@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from poetry_gp.reducer_2d import default_umap_jobs, fit_umap_projection, save_reducer
+from poetry_gp.reducer_2d import fit_umap_projection, save_reducer
 
 
 def parse_args() -> argparse.Namespace:
@@ -18,8 +18,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-neighbors", type=int, default=30)
     parser.add_argument("--min-dist", type=float, default=0.05)
     parser.add_argument("--metric", default="cosine")
-    parser.add_argument("--n-jobs", type=int, default=default_umap_jobs())
+    parser.add_argument("--n-jobs", type=int, default=1)
     parser.add_argument("--deterministic", action="store_true")
+    parser.add_argument("--pre-reduce-dims", type=int, default=50)
     return parser.parse_args()
 
 
@@ -28,7 +29,7 @@ def main() -> None:
     x = np.load(args.input)
     if args.limit is not None:
         x = x[: args.limit]
-    reducer, z = fit_umap_projection(
+    reducer_bundle, z = fit_umap_projection(
         x,
         n_neighbors=args.n_neighbors,
         min_dist=args.min_dist,
@@ -36,16 +37,18 @@ def main() -> None:
         random_state=args.seed,
         deterministic=args.deterministic,
         n_jobs=args.n_jobs,
+        pre_reduce_dims=args.pre_reduce_dims,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     np.save(args.output, z)
-    save_reducer(reducer, args.reducer_output)
+    save_reducer(reducer_bundle, args.reducer_output)
     print(f"wrote UMAP projection with shape {z.shape} to {args.output}")
     print(f"wrote fitted reducer to {args.reducer_output}")
     print(
         "UMAP settings: "
         f"metric={args.metric} n_neighbors={args.n_neighbors} min_dist={args.min_dist} "
-        f"deterministic={args.deterministic} n_jobs={args.n_jobs} dtype=float32"
+        f"deterministic={args.deterministic} n_jobs={args.n_jobs} "
+        f"pre_reduce_dims={args.pre_reduce_dims} dtype=float32"
     )
 
 
