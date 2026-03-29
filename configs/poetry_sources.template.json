@@ -1,0 +1,39 @@
+[
+  {
+    "name": "public_domain_poetry",
+    "kind": "huggingface",
+    "location": "DanFosing/public-domain-poetry",
+    "split": "train",
+    "enabled": true,
+    "priority": 10,
+    "language": "en",
+    "license_family": "public_domain"
+  },
+  {
+    "name": "poetrydb_export",
+    "kind": "jsonl",
+    "location": "data/poetrydb_export.jsonl",
+    "enabled": false,
+    "priority": 20,
+    "language": "en",
+    "license_family": "unknown"
+  },
+  {
+    "name": "gutenberg_extracted_poems",
+    "kind": "parquet",
+    "location": "data/gutenberg_poems.parquet",
+    "enabled": false,
+    "priority": 30,
+    "language": "en",
+    "license_family": "public_domain"
+  },
+  {
+    "name": "local_extra_poems_csv",
+    "kind": "csv",
+    "location": "data/extra_poems.csv",
+    "enabled": false,
+    "priority": 50,
+    "language": "en",
+    "license_family": "unknown"
+  }
+]
