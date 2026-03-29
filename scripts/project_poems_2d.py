@@ -4,14 +4,20 @@ import argparse
 from pathlib import Path
 
 import numpy as np
-from scipy.linalg import svd
+
+from poetry_gp.reducer_2d import fit_umap_projection, save_reducer
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, default=Path("data/embeddings.npy"))
     parser.add_argument("--output", type=Path, default=Path("data/proj2d.npy"))
+    parser.add_argument("--reducer-output", type=Path, default=Path("data/proj2d_reducer.pkl"))
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--n-neighbors", type=int, default=30)
+    parser.add_argument("--min-dist", type=float, default=0.05)
+    parser.add_argument("--metric", default="cosine")
     return parser.parse_args()
 
 
@@ -20,13 +26,19 @@ def main() -> None:
     x = np.load(args.input)
     if args.limit is not None:
         x = x[: args.limit]
-    x = x.astype(np.float64, copy=False)
-    x = x - x.mean(axis=0, keepdims=True)
-    u, s, _vt = svd(x, full_matrices=False, check_finite=False)
-    z = u[:, :2] * s[:2]
+    x = np.asarray(x, dtype=np.float64)
+    reducer, z = fit_umap_projection(
+        x,
+        n_neighbors=args.n_neighbors,
+        min_dist=args.min_dist,
+        metric=args.metric,
+        random_state=args.seed,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     np.save(args.output, z)
-    print(f"wrote 2D projection with shape {z.shape} to {args.output}")
+    save_reducer(reducer, args.reducer_output)
+    print(f"wrote UMAP projection with shape {z.shape} to {args.output}")
+    print(f"wrote fitted reducer to {args.reducer_output}")
 
 
 if __name__ == "__main__":

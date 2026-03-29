@@ -6,6 +6,16 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+BAD_POET_NAMES = {
+    "anonymous",
+    "anon",
+    "unknown",
+    "unknown poet",
+    "[unknown poet]",
+    "traditional",
+    "various",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -15,6 +25,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-npy", type=Path, default=Path("data/poet_centroids.npy"))
     parser.add_argument("--min-poems", type=int, default=3)
     return parser.parse_args()
+
+
+def is_valid_poet_name(value: object) -> bool:
+    name = " ".join(str(value).strip().lower().split())
+    if not name:
+        return False
+    if name in BAD_POET_NAMES:
+        return False
+    if name.startswith("anonymous ") or name.startswith("unknown "):
+        return False
+    return True
 
 
 def main() -> None:
@@ -29,7 +50,8 @@ def main() -> None:
     work = poems.copy()
     work["row_index"] = np.arange(len(work))
     counts = work.groupby("poet", dropna=False).size().rename("n_poems").reset_index()
-    counts = counts[(counts["poet"].astype(str).str.len() > 0) & (counts["n_poems"] >= args.min_poems)].reset_index(drop=True)
+    counts = counts[counts["poet"].map(is_valid_poet_name)].reset_index(drop=True)
+    counts = counts[counts["n_poems"] >= args.min_poems].reset_index(drop=True)
 
     rows = []
     centroid_list = []
