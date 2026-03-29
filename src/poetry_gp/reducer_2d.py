@@ -65,7 +65,7 @@ def fit_umap_projection(
     metric: str = "cosine",
     random_state: int = 0,
     deterministic: bool = False,
-    n_jobs: int | None = None,
+    n_jobs: int | None = 1,
     pre_reduce_dims: int | None = 50,
 ):
     x = np.asarray(x, dtype=np.float32)
