@@ -225,13 +225,11 @@ def dedupe_canonical_poems(df: pd.DataFrame, *, min_chars: int = 80) -> tuple[pd
     deduped = work[work["dedupe_rank"] == 0].copy().reset_index(drop=True)
     duplicates = work[work["dedupe_rank"] > 0].copy().reset_index(drop=True)
 
-    summary = pd.DataFrame(
-        [
-            {"stage": "input_rows", "count": int(before_len)},
-            {"stage": "after_min_chars", "count": int(len(work))},
-            {"stage": "deduped_rows", "count": int(len(deduped))},
-            {"stage": "removed_as_duplicates", "count": int(len(duplicates))},
-        ]
-    )
-    deduped.attrs["summary"] = summary
+    summary_rows = [
+        {"stage": "input_rows", "count": int(before_len)},
+        {"stage": "after_min_chars", "count": int(len(work))},
+        {"stage": "deduped_rows", "count": int(len(deduped))},
+        {"stage": "removed_as_duplicates", "count": int(len(duplicates))},
+    ]
+    deduped.attrs["summary_rows"] = summary_rows
     return deduped, duplicates
