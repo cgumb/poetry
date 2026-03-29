@@ -13,7 +13,7 @@
     "name": "poetry_foundation_jnb666",
     "kind": "huggingface",
     "location": "jnb666/poems",
-    "split": "train+val",
+    "split": "train+validation",
     "enabled": true,
     "priority": 20,
     "language": "en",
