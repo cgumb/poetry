@@ -10,30 +10,33 @@
     "license_family": "public_domain"
   },
   {
-    "name": "poetrydb_export",
-    "kind": "jsonl",
-    "location": "data/poetrydb_export.jsonl",
-    "enabled": false,
+    "name": "poetry_foundation_jnb666",
+    "kind": "huggingface",
+    "location": "jnb666/poems",
+    "split": "train+val",
+    "enabled": true,
     "priority": 20,
     "language": "en",
-    "license_family": "unknown"
+    "license_family": "poetry_foundation_scrape"
   },
   {
-    "name": "gutenberg_extracted_poems",
-    "kind": "parquet",
-    "location": "data/gutenberg_poems.parquet",
+    "name": "poetry_foundation_poems_alt",
+    "kind": "huggingface",
+    "location": "suayptalha/Poetry-Foundation-Poems",
+    "split": "train",
     "enabled": false,
     "priority": 30,
     "language": "en",
-    "license_family": "public_domain"
+    "license_family": "poetry_foundation_scrape"
   },
   {
-    "name": "local_extra_poems_csv",
-    "kind": "csv",
-    "location": "data/extra_poems.csv",
+    "name": "poetry_foundation_data_alt",
+    "kind": "huggingface",
+    "location": "shahules786/PoetryFoundationData",
+    "split": "train",
     "enabled": false,
-    "priority": 50,
+    "priority": 40,
     "language": "en",
-    "license_family": "unknown"
+    "license_family": "poetry_foundation_scrape"
   }
 ]
