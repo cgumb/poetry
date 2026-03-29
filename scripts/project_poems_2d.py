@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-neighbors", type=int, default=30)
     parser.add_argument("--min-dist", type=float, default=0.05)
     parser.add_argument("--metric", default="cosine")
-    parser.add_argument("--n-jobs", type=int, default=1)
+    parser.add_argument("--n-jobs", type=int, default=None)
     parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--pre-reduce-dims", type=int, default=50)
     return parser.parse_args()
