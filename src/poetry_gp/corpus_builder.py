@@ -56,11 +56,10 @@ def build_duplicate_group_report(deduped: pd.DataFrame, duplicates: pd.DataFrame
         "normalized_title",
         "normalized_poet",
         "text_hash",
-        "text_hash_loose",
         "title_poet_key",
         "title_poet_text_key",
     ]
-    existing = [col for col in columns if col in combined.columns]
+    existing = list(dict.fromkeys(col for col in columns if col in combined.columns))
     report = combined[existing].sort_values(
         by=["text_hash_loose", "kept_representative", "source_priority", "poem_id"],
         ascending=[True, False, True, True],
