@@ -100,16 +100,29 @@ python scripts/project_poems_2d.py \
   --reducer-output data/proj2d_reducer.pkl
 ```
 
-By default this uses `float32` and a non-deterministic UMAP configuration so it can take advantage of more CPU parallelism. If you need more reproducible output, you can opt into a slower deterministic mode:
+The projection path now uses:
+
+- `float32`
+- a PCA-style pre-reduction step before UMAP (default: 50 dimensions)
+- conservative CPU parallelism by default (`--n-jobs 1`)
+- optional non-deterministic execution for speed
+
+If you want a faster-but-riskier run on a roomier machine, increase jobs manually:
+
+```bash
+python scripts/project_poems_2d.py --n-jobs 2
+```
+
+If you want more reproducible output instead of speed:
 
 ```bash
 python scripts/project_poems_2d.py --deterministic --seed 0
 ```
 
-You can also control parallelism explicitly:
+You can also tune the pre-reduction size explicitly:
 
 ```bash
-python scripts/project_poems_2d.py --n-jobs 16
+python scripts/project_poems_2d.py --pre-reduce-dims 50
 ```
 
 Build poet centroids in embedding space and then project them with the **same** reducer:

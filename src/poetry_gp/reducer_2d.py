@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import pickle
 from pathlib import Path
 
@@ -39,6 +38,25 @@ def _build_umap(*, n_neighbors: int, min_dist: float, metric: str, random_state:
         return UMAP(**kwargs)
 
 
+def _fit_pca_prereducer(x: np.ndarray, out_dims: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    x = np.asarray(x, dtype=np.float32)
+    if out_dims <= 0 or out_dims >= x.shape[1]:
+        return x, np.zeros((1, x.shape[1]), dtype=np.float32), np.eye(x.shape[1], dtype=np.float32)
+    mean = x.mean(axis=0, keepdims=True, dtype=np.float64).astype(np.float32)
+    xc = x - mean
+    cov = (xc.T.astype(np.float64) @ xc.astype(np.float64)) / max(x.shape[0] - 1, 1)
+    evals, evecs = np.linalg.eigh(cov)
+    order = np.argsort(evals)[::-1][:out_dims]
+    components = evecs[:, order].astype(np.float32, copy=False)
+    z = xc @ components
+    return z.astype(np.float32, copy=False), mean, components
+
+
+def _apply_pca_prereducer(x: np.ndarray, mean: np.ndarray, components: np.ndarray) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32)
+    return (x - mean) @ components
+
+
 def fit_umap_projection(
     x: np.ndarray,
     *,
@@ -47,9 +65,15 @@ def fit_umap_projection(
     metric: str = "cosine",
     random_state: int = 0,
     deterministic: bool = False,
-    n_jobs: int | None = None,
+    n_jobs: int | None = 1,
+    pre_reduce_dims: int | None = 50,
 ):
     x = np.asarray(x, dtype=np.float32)
+    pre_mean = None
+    pre_components = None
+    x_umap = x
+    if pre_reduce_dims is not None and 0 < int(pre_reduce_dims) < x.shape[1]:
+        x_umap, pre_mean, pre_components = _fit_pca_prereducer(x, int(pre_reduce_dims))
     reducer = _build_umap(
         n_neighbors=n_neighbors,
         min_dist=min_dist,
@@ -58,27 +82,31 @@ def fit_umap_projection(
         deterministic=deterministic,
         n_jobs=n_jobs,
     )
-    z = reducer.fit_transform(x)
-    return reducer, np.asarray(z, dtype=np.float32)
+    z = reducer.fit_transform(x_umap)
+    bundle = {
+        "umap": reducer,
+        "pre_mean": pre_mean,
+        "pre_components": pre_components,
+        "pre_reduce_dims": None if pre_components is None else int(pre_components.shape[1]),
+        "metric": metric,
+    }
+    return bundle, np.asarray(z, dtype=np.float32)
 
 
-def transform_with_reducer(reducer, x: np.ndarray) -> np.ndarray:
+def transform_with_reducer(reducer_bundle, x: np.ndarray) -> np.ndarray:
     x = np.asarray(x, dtype=np.float32)
-    z = reducer.transform(x)
+    pre_mean = reducer_bundle.get("pre_mean")
+    pre_components = reducer_bundle.get("pre_components")
+    if pre_mean is not None and pre_components is not None:
+        x = _apply_pca_prereducer(x, pre_mean, pre_components)
+    z = reducer_bundle["umap"].transform(x)
     return np.asarray(z, dtype=np.float32)
 
 
-def default_umap_jobs() -> int | None:
-    cpu_count = os.cpu_count()
-    if cpu_count is None or cpu_count < 1:
-        return None
-    return cpu_count
-
-
-def save_reducer(reducer, path: Path) -> None:
+def save_reducer(reducer_bundle, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as f:
-        pickle.dump(reducer, f)
+        pickle.dump(reducer_bundle, f)
 
 
 def load_reducer(path: Path):
