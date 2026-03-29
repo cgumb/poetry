@@ -22,11 +22,12 @@ class BuildCorpusResult:
     summary: pd.DataFrame
 
 
+
 def parse_selected_names(spec: str) -> set[str] | None:
     cleaned = spec.strip()
     if cleaned.lower() == "all":
         return None
-    names = {part.strip() for part in cleaned.split(",") if part.strip()}
+    names = {part.strip() for part in spec.split(",") if part.strip()}
     if not names:
         raise ValueError("--sources was provided but no source names were parsed.")
     return names
@@ -82,7 +83,8 @@ def build_poetry_corpus_from_specs(
     )
     deduped, duplicates = dedupe_canonical_poems(combined, min_chars=min_chars)
     duplicate_groups = build_duplicate_group_report(deduped, duplicates)
-    summary = deduped.attrs.get("summary", pd.DataFrame())
+    summary_rows = deduped.attrs.get("summary_rows", [])
+    summary = pd.DataFrame(summary_rows)
     return BuildCorpusResult(
         deduped=deduped,
         duplicates=duplicates,
