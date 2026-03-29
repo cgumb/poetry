@@ -91,18 +91,38 @@ Build poem embeddings:
 python scripts/embed_poems.py --input data/poems.parquet --output data/embeddings.npy
 ```
 
-Project poems to 2D:
+Project poems to 2D with UMAP and save the fitted reducer:
 
 ```bash
-python scripts/project_poems_2d.py --input data/embeddings.npy --output data/proj2d.npy
+python scripts/project_poems_2d.py \
+  --input data/embeddings.npy \
+  --output data/proj2d.npy \
+  --reducer-output data/proj2d_reducer.pkl
 ```
 
-Build poet centroids and project them to 2D:
+By default this uses `float32` and a non-deterministic UMAP configuration so it can take advantage of more CPU parallelism. If you need more reproducible output, you can opt into a slower deterministic mode:
+
+```bash
+python scripts/project_poems_2d.py --deterministic --seed 0
+```
+
+You can also control parallelism explicitly:
+
+```bash
+python scripts/project_poems_2d.py --n-jobs 16
+```
+
+Build poet centroids in embedding space and then project them with the **same** reducer:
 
 ```bash
 python scripts/build_poet_centroids.py --poems data/poems.parquet --embeddings data/embeddings.npy
-python scripts/project_poet_centroids_2d.py --input data/poet_centroids.npy --output data/poet_centroids_2d.npy
+python scripts/project_poet_centroids_2d.py \
+  --input data/poet_centroids.npy \
+  --output data/poet_centroids_2d.npy \
+  --reducer data/proj2d_reducer.pkl
 ```
+
+This shared-reducer path matters: poem points and poet centroids should live in the same 2D coordinate system if they are going to be overlaid on the same visualization.
 
 ## Interacting with the project
 
@@ -186,6 +206,7 @@ src/poetry_gp/
   kernel.py
   heatmap.py
   profiling.py
+  reducer_2d.py
   backends/
     naive.py
     blocked.py
