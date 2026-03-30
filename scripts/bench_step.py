@@ -18,6 +18,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--m-rated", type=int, default=20)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--block-size", type=int, default=2048)
+    parser.add_argument("--length-scale", type=float, default=1.0)
+    parser.add_argument("--variance", type=float, default=1.0)
+    parser.add_argument("--noise", type=float, default=1e-3)
+    parser.add_argument("--optimize-hyperparameters", action="store_true")
+    parser.add_argument("--optimizer-maxiter", type=int, default=50)
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args()
 
@@ -33,25 +38,50 @@ def main() -> None:
     ratings = rng.normal(size=args.m_rated)
 
     if args.backend == "naive":
-        result = run_naive_step(embeddings, rated_indices, ratings)
+        result = run_naive_step(
+            embeddings,
+            rated_indices,
+            ratings,
+            length_scale=args.length_scale,
+            variance=args.variance,
+            noise=args.noise,
+            optimize_hyperparameters=args.optimize_hyperparameters,
+            optimizer_maxiter=args.optimizer_maxiter,
+        )
     else:
         result = run_blocked_step(
             embeddings,
             rated_indices,
             ratings,
+            length_scale=args.length_scale,
+            variance=args.variance,
+            noise=args.noise,
             block_size=args.block_size,
+            optimize_hyperparameters=args.optimize_hyperparameters,
+            optimizer_maxiter=args.optimizer_maxiter,
         )
 
+    optimization_result = result.state.optimization_result or {}
     profile = {
         "backend": args.backend,
         "n_poems": args.n_poems,
         "dim": args.dim,
         "m_rated": args.m_rated,
         "block_size": args.block_size,
+        "optimize_hyperparameters": args.optimize_hyperparameters,
+        "optimizer_maxiter": args.optimizer_maxiter,
         "fit_seconds": result.profile.fit_seconds,
+        "optimize_seconds": result.profile.optimize_seconds,
         "score_seconds": result.profile.score_seconds,
         "select_seconds": result.profile.select_seconds,
         "total_seconds": result.profile.total_seconds,
+        "length_scale": result.state.length_scale,
+        "variance": result.state.variance,
+        "noise": result.state.noise,
+        "log_marginal_likelihood": result.state.log_marginal_likelihood,
+        "optimization_success": optimization_result.get("success"),
+        "used_optimized_params": optimization_result.get("used_optimized_params", False),
+        "optimization_nit": optimization_result.get("nit"),
         "exploit_index": result.exploit_index,
         "explore_index": result.explore_index,
     }

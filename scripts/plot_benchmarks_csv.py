@@ -17,6 +17,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     df = pd.read_csv(args.input)
+    if "optimize_seconds" not in df.columns:
+        df["optimize_seconds"] = 0.0
     df = df.sort_values(["backend", "n_poems", "m_rated"], ignore_index=True)
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.8))
@@ -39,9 +41,15 @@ def main() -> None:
 
     latest = df.sort_values(["n_poems", "m_rated"]).groupby("backend", as_index=False).tail(1)
     x = range(len(latest))
-    axes[2].bar(x, latest["fit_seconds"], label="fit")
-    axes[2].bar(x, latest["score_seconds"], bottom=latest["fit_seconds"], label="score")
-    axes[2].bar(x, latest["select_seconds"], bottom=latest["fit_seconds"] + latest["score_seconds"], label="select")
+    fit_without_opt = (latest["fit_seconds"] - latest["optimize_seconds"]).clip(lower=0.0)
+    axes[2].bar(x, fit_without_opt, label="fit")
+    bottom = fit_without_opt.copy()
+    if (latest["optimize_seconds"] > 0).any():
+        axes[2].bar(x, latest["optimize_seconds"], bottom=bottom, label="optimize")
+        bottom = bottom + latest["optimize_seconds"]
+    axes[2].bar(x, latest["score_seconds"], bottom=bottom, label="score")
+    bottom = bottom + latest["score_seconds"]
+    axes[2].bar(x, latest["select_seconds"], bottom=bottom, label="select")
     axes[2].set_xticks(list(x), latest["backend"].tolist())
     axes[2].set_title("Largest-run stage breakdown")
     axes[2].set_ylabel("Seconds")

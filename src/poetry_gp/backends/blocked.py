@@ -11,6 +11,7 @@ from ..gp_exact import GPState, fit_exact_gp, predict_block
 @dataclass
 class StepProfile:
     fit_seconds: float
+    optimize_seconds: float
     score_seconds: float
     select_seconds: float
     total_seconds: float
@@ -23,6 +24,7 @@ class BlockedStepResult:
     exploit_index: int
     explore_index: int
     profile: StepProfile
+    state: GPState
 
 
 def run_blocked_step(
@@ -35,6 +37,8 @@ def run_blocked_step(
     variance: float = 1.0,
     noise: float = 1e-3,
     block_size: int = 2048,
+    optimize_hyperparameters: bool = False,
+    optimizer_maxiter: int = 50,
 ) -> BlockedStepResult:
     t0 = perf_counter()
     rated_indices = np.asarray(rated_indices, dtype=np.int64)
@@ -56,6 +60,8 @@ def run_blocked_step(
         length_scale=length_scale,
         variance=variance,
         noise=noise,
+        optimize_hyperparameters=optimize_hyperpareters,
+        optimizer_maxiter=optimizer_maxiter,
     )
     fit_end = perf_counter()
 
@@ -80,6 +86,10 @@ def run_blocked_step(
     explore_index = int(np.argmax(masked_var))
     select_end = perf_counter()
 
+    optimize_seconds = 0.0
+    if state.optimization_result is not None:
+        optimize_seconds = float(state.optimization_result.get("optimize_seconds", 0.0))
+
     return BlockedStepResult(
         mean=mean,
         variance=variance_arr,
@@ -87,8 +97,10 @@ def run_blocked_step(
         explore_index=explore_index,
         profile=StepProfile(
             fit_seconds=fit_end - fit_start,
+            optimize_seconds=optimize_seconds,
             score_seconds=score_end - score_start,
             select_seconds=select_end - select_start,
             total_seconds=select_end - t0,
         ),
+        state=state,
     )
