@@ -28,6 +28,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embeddings", type=Path, default=Path("data/embeddings.npy"))
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--session-file", type=Path, default=Path("data/ratings_session.json"))
+    parser.add_argument("--length-scale", type=float, default=1.0)
+    parser.add_argument("--variance", type=float, default=1.0)
+    parser.add_argument("--noise", type=float, default=1e-3)
+    parser.add_argument("--optimize-hyperparameters", action="store_true")
+    parser.add_argument("--optimizer-maxiter", type=int, default=50)
     return parser.parse_args()
 
 
@@ -123,7 +128,7 @@ def prompt_search(df: pd.DataFrame, title_col: str, poet_col: str, text_col: str
 def main() -> None:
     args = parse_args()
     poems = pd.read_parquet(args.poems)
-    embeddings = np.load(args.embeddings)
+    embeddings = np.load(args.embeddings, mmap_mode="r")
     if len(poems) != embeddings.shape[0]:
         raise ValueError("poem and embedding row counts do not match")
 
@@ -139,6 +144,10 @@ def main() -> None:
         print(f"Loaded session from {args.session_file}")
     else:
         current_idx = int(rng.integers(len(poems)))
+
+    current_length_scale = float(args.length_scale)
+    current_variance = float(args.variance)
+    current_noise = float(args.noise)
 
     help_text = (
         "Commands: [l]ike [n]eutral [d]islike [e]xploit e[x]plore [s]earch [r]ated [q]uit"
@@ -179,12 +188,26 @@ def main() -> None:
             embeddings,
             np.array(rated_indices, dtype=np.int64),
             np.array(ratings, dtype=np.float64),
+            length_scale=current_length_scale,
+            variance=current_variance,
+            noise=current_noise,
+            optimize_hyperparameters=args.optimize_hyperparameters,
+            optimizer_maxiter=args.optimizer_maxiter,
         )
+        if args.optimize_hyperparameters:
+            current_length_scale = float(result.state.length_scale)
+            current_variance = float(result.state.variance)
+            current_noise = float(result.state.noise)
         current_idx = result.exploit_index if cmd == "e" else result.explore_index
         save_session(args.session_file, current_idx, rated_indices, ratings)
         print(
-            f"Timing: fit={result.profile.fit_seconds:.4f}s score={result.profile.score_seconds:.4f}s total={result.profile.total_seconds:.4f}s"
+            f"Timing: fit={result.profile.fit_seconds:.4f}s optimize={result.profile.optimize_seconds:.4f}s score={result.profile.score_seconds:.4f}s total={result.profile.total_seconds:.4f}s"
         )
+        print(
+            f"Kernel params: length_scale={result.state.length_scale:.4g} variance={result.state.variance:.4g} noise={result.state.noise:.4g}"
+        )
+        if result.state.log_marginal_likelihood is not None:
+            print(f"Log marginal likelihood: {result.state.log_marginal_likelihood:.6f}")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dim", type=int, default=384)
     parser.add_argument("--block-size", type=int, default=2048)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--length-scale", type=float, default=1.0)
+    parser.add_argument("--variance", type=float, default=1.0)
+    parser.add_argument("--noise", type=float, default=1e-3)
+    parser.add_argument("--optimize-hyperparameters", action="store_true")
+    parser.add_argument("--optimizer-maxiter", type=int, default=50)
     parser.add_argument("--output", type=Path, default=Path("results/bench_results.csv"))
     return parser.parse_args()
 
@@ -40,10 +45,19 @@ def main() -> None:
         "m_rated",
         "dim",
         "block_size",
+        "optimize_hyperparameters",
+        "optimizer_maxiter",
         "fit_seconds",
+        "optimize_seconds",
         "score_seconds",
         "select_seconds",
         "total_seconds",
+        "length_scale",
+        "variance",
+        "noise",
+        "log_marginal_likelihood",
+        "optimization_success",
+        "used_optimized_params",
     ]
     with args.output.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -58,21 +72,50 @@ def main() -> None:
                 ratings = rng.normal(size=m)
                 for backend in backends:
                     if backend == "naive":
-                        result = run_naive_step(embeddings, rated_indices, ratings)
+                        result = run_naive_step(
+                            embeddings,
+                            rated_indices,
+                            ratings,
+                            length_scale=args.length_scale,
+                            variance=args.variance,
+                            noise=args.noise,
+                            optimize_hyperparameters=args.optimize_hyperparameters,
+                            optimizer_maxiter=args.optimizer_maxiter,
+                        )
                     elif backend == "blocked":
-                        result = run_blocked_step(embeddings, rated_indices, ratings, block_size=args.block_size)
+                        result = run_blocked_step(
+                            embeddings,
+                            rated_indices,
+                            ratings,
+                            length_scale=args.length_scale,
+                            variance=args.variance,
+                            noise=args.noise,
+                            block_size=args.block_size,
+                            optimize_hyperparameters=args.optimize_hyperparameters,
+                            optimizer_maxiter=args.optimizer_maxiter,
+                        )
                     else:
                         raise ValueError(f"Unknown backend: {backend}")
+                    optimization_result = result.state.optimization_result or {}
                     row = {
                         "backend": backend,
                         "n_poems": n,
                         "m_rated": m,
                         "dim": args.dim,
                         "block_size": args.block_size,
+                        "optimize_hyperparameters": args.optimize_hyperparameters,
+                        "optimizer_maxiter": args.optimizer_maxiter,
                         "fit_seconds": result.profile.fit_seconds,
+                        "optimize_seconds": result.profile.optimize_seconds,
                         "score_seconds": result.profile.score_seconds,
                         "select_seconds": result.profile.select_seconds,
                         "total_seconds": result.profile.total_seconds,
+                        "length_scale": result.state.length_scale,
+                        "variance": result.state.variance,
+                        "noise": result.state.noise,
+                        "log_marginal_likelihood": result.state.log_marginal_likelihood,
+                        "optimization_success": optimization_result.get("success"),
+                        "used_optimized_params": optimization_result.get("used_optimized_params", False),
                     }
                     writer.writerow(row)
                     print(row)
