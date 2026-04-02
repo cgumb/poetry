@@ -49,6 +49,7 @@ def run_blocked_step(
     scalapack_grid_rows: int | None = None,
     scalapack_grid_cols: int | None = None,
     scalapack_workdir: Path | None = None,
+    scalapack_verbose: bool = False,
 ) -> BlockedStepResult:
     t0 = perf_counter()
     rated_indices = np.asarray(rated_indices, dtype=np.int64)
@@ -90,6 +91,7 @@ def run_blocked_step(
             grid_rows=scalapack_grid_rows,
             grid_cols=scalapack_grid_cols,
             workdir=scalapack_workdir,
+            verbose=scalapack_verbose,
         )
     else:
         raise ValueError(f"Unknown fit_backend: {fit_backend}")

@@ -137,6 +137,7 @@ def fit_exact_gp_scalapack(
     grid_rows: int | None = None,
     grid_cols: int | None = None,
     workdir: Path | None = None,
+    verbose: bool = False,
 ) -> ScaLAPACKFitResult:
     prepared = prepare_scalapack_fit_workdir(
         K_rr,
@@ -149,7 +150,12 @@ def fit_exact_gp_scalapack(
         grid_cols=grid_cols,
         workdir=workdir,
     )
-    subprocess.run(prepared.command, check=True)
+    if verbose:
+        print(f"[native-fit] workdir: {prepared.workdir}", flush=True)
+        print(f"[native-fit] command: {' '.join(prepared.command)}", flush=True)
+    completed = subprocess.run(prepared.command, check=False)
+    if verbose:
+        print(f"[native-fit] launcher return code: {completed.returncode}", flush=True)
     meta = json.loads(prepared.output_meta_path.read_text())
     n = int(meta["n"])
     alpha = np.fromfile(prepared.alpha_bin_path, dtype=np.float64, count=n)
@@ -172,6 +178,15 @@ def fit_exact_gp_scalapack(
         message=str(meta.get("message", "")),
         workdir=prepared.workdir,
     )
+    if verbose:
+        print(
+            "[native-fit] output meta: "
+            f"backend={result.backend} implemented={result.implemented} "
+            f"info_potrf={result.info_potrf} info_potrs={result.info_potrs}",
+            flush=True,
+        )
+    if completed.returncode != 0 and result.implemented:
+        raise RuntimeError(result.message)
     if result.info_potrf != 0 or result.info_potrs not in {0, -1}:
         raise RuntimeError(result.message)
     if not result.implemented:
@@ -193,6 +208,7 @@ def fit_exact_gp_scalapack_from_rated(
     grid_rows: int | None = None,
     grid_cols: int | None = None,
     workdir: Path | None = None,
+    verbose: bool = False,
 ) -> GPState:
     x_rated = np.asarray(x_rated, dtype=np.float64)
     y_rated = np.asarray(y_rated, dtype=np.float64)
@@ -217,6 +233,7 @@ def fit_exact_gp_scalapack_from_rated(
         grid_rows=grid_rows,
         grid_cols=grid_cols,
         workdir=workdir,
+        verbose=verbose,
     )
     lml = -0.5 * float(y_rated @ result.alpha) - 0.5 * float(result.logdet) - 0.5 * len(y_rated) * np.log(2.0 * np.pi)
     return GPState(
@@ -233,5 +250,6 @@ def fit_exact_gp_scalapack_from_rated(
             "native_backend": result.backend,
             "fit_total_seconds": result.total_seconds,
             "message": result.message,
+            "workdir": str(result.workdir),
         },
     )
