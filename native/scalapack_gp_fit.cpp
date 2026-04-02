@@ -108,30 +108,27 @@ void write_binary_matrix(const std::string& path, const std::vector<double>& dat
   out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size() * sizeof(double)));
 }
 
-int cholesky_lower_inplace(std::vector<double>& a, std::size_t n) {
-  for (std::size_t j = 0; j < n; ++j) {
-    double sum = a[j * n + j];
-    for (std::size_t k = 0; k < j; ++k) {
-      const double ljk = a[j * n + k];
-      sum -= ljk * ljk;
-    }
-    if (!(sum > 0.0)) {
-      return static_cast<int>(j + 1);
-    }
-    const double ljj = std::sqrt(sum);
-    a[j * n + j] = ljj;
-    for (std::size_t i = j + 1; i < n; ++i) {
-      double s = a[i * n + j];
-      for (std::size_t k = 0; k < j; ++k) {
-        s -= a[i * n + k] * a[j * n + k];
-      }
-      a[i * n + j] = s / ljj;
-    }
-    for (std::size_t k = j + 1; k < n; ++k) {
-      a[j * n + k] = 0.0;
+void build_row_partition(std::size_t n, int size, std::vector<int>& row_counts, std::vector<int>& row_starts) {
+  row_counts.assign(size, 0);
+  row_starts.assign(size, 0);
+  const std::size_t base = n / static_cast<std::size_t>(size);
+  const std::size_t rem = n % static_cast<std::size_t>(size);
+  int cursor = 0;
+  for (int r = 0; r < size; ++r) {
+    const std::size_t count = base + (static_cast<std::size_t>(r) < rem ? 1u : 0u);
+    row_counts[r] = static_cast<int>(count);
+    row_starts[r] = cursor;
+    cursor += row_counts[r];
+  }
+}
+
+int owner_of_row(int global_row, const std::vector<int>& row_counts, const std::vector<int>& row_starts) {
+  for (int r = 0; r < static_cast<int>(row_counts.size()); ++r) {
+    if (global_row >= row_starts[r] && global_row < row_starts[r] + row_counts[r]) {
+      return r;
     }
   }
-  return 0;
+  return -1;
 }
 
 std::vector<double> solve_from_cholesky_lower(const std::vector<double>& l, const std::vector<double>& y, std::size_t n) {
@@ -164,6 +161,64 @@ double logdet_from_cholesky_lower(const std::vector<double>& l, std::size_t n) {
   return 2.0 * sum;
 }
 
+int factorize_lower_mpi_row_partitioned(
+    std::vector<double>& local_rows,
+    std::size_t n,
+    int rank,
+    int size,
+    const std::vector<int>& row_counts,
+    const std::vector<int>& row_starts,
+    MPI_Comm comm) {
+  int info = 0;
+  for (std::size_t j = 0; j < n; ++j) {
+    const int global_j = static_cast<int>(j);
+    const int owner = owner_of_row(global_j, row_counts, row_starts);
+    double ljj = 0.0;
+    std::vector<double> row_prefix(j, 0.0);
+
+    if (rank == owner) {
+      const int local_j = global_j - row_starts[rank];
+      double diag = local_rows[static_cast<std::size_t>(local_j) * n + j];
+      for (std::size_t k = 0; k < j; ++k) {
+        const double value = local_rows[static_cast<std::size_t>(local_j) * n + k];
+        row_prefix[k] = value;
+        diag -= value * value;
+      }
+      if (!(diag > 0.0)) {
+        info = global_j + 1;
+      } else {
+        ljj = std::sqrt(diag);
+        local_rows[static_cast<std::size_t>(local_j) * n + j] = ljj;
+        for (std::size_t k = j + 1; k < n; ++k) {
+          local_rows[static_cast<std::size_t>(local_j) * n + k] = 0.0;
+        }
+      }
+    }
+
+    MPI_Bcast(&info, 1, MPI_INT, owner, comm);
+    if (info != 0) {
+      break;
+    }
+    MPI_Bcast(&ljj, 1, MPI_DOUBLE, owner, comm);
+    if (j > 0) {
+      MPI_Bcast(row_prefix.data(), static_cast<int>(j), MPI_DOUBLE, owner, comm);
+    }
+
+    for (int local_i = 0; local_i < row_counts[rank]; ++local_i) {
+      const int global_i = row_starts[rank] + local_i;
+      if (global_i <= global_j) {
+        continue;
+      }
+      double value = local_rows[static_cast<std::size_t>(local_i) * n + j];
+      for (std::size_t k = 0; k < j; ++k) {
+        value -= local_rows[static_cast<std::size_t>(local_i) * n + k] * row_prefix[k];
+      }
+      local_rows[static_cast<std::size_t>(local_i) * n + j] = value / ljj;
+    }
+  }
+  return info;
+}
+
 int main(int argc, char** argv) {
   MPI_Init(&argc, &argv);
   int rank = 0;
@@ -174,16 +229,80 @@ int main(int argc, char** argv) {
   int exit_code = 0;
   try {
     const Args args = parse_args(argc, argv);
+    std::size_t n = 0;
     if (rank == 0) {
-      const std::size_t n = parse_n_from_meta(args.input_meta);
-      const auto matrix = read_binary_matrix(args.matrix_bin, n);
-      const auto rhs = read_binary_vector(args.rhs_bin, n);
+      n = parse_n_from_meta(args.input_meta);
+    }
+    MPI_Bcast(&n, 1, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
 
-      auto chol = matrix;
-      const auto t0 = std::chrono::steady_clock::now();
-      const auto factor_start = std::chrono::steady_clock::now();
-      const int info_potrf = cholesky_lower_inplace(chol, n);
-      const auto factor_end = std::chrono::steady_clock::now();
+    std::vector<int> row_counts;
+    std::vector<int> row_starts;
+    build_row_partition(n, size, row_counts, row_starts);
+
+    std::vector<int> sendcounts(size, 0);
+    std::vector<int> displs(size, 0);
+    for (int r = 0; r < size; ++r) {
+      sendcounts[r] = row_counts[r] * static_cast<int>(n);
+      displs[r] = row_starts[r] * static_cast<int>(n);
+    }
+
+    std::vector<double> full_matrix;
+    std::vector<double> rhs;
+    if (rank == 0) {
+      full_matrix = read_binary_matrix(args.matrix_bin, n);
+      rhs = read_binary_vector(args.rhs_bin, n);
+    }
+
+    std::vector<double> local_rows(static_cast<std::size_t>(row_counts[rank]) * n, 0.0);
+    MPI_Scatterv(
+        rank == 0 ? full_matrix.data() : nullptr,
+        sendcounts.data(),
+        displs.data(),
+        MPI_DOUBLE,
+        local_rows.data(),
+        sendcounts[rank],
+        MPI_DOUBLE,
+        0,
+        MPI_COMM_WORLD);
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    const auto total_start = std::chrono::steady_clock::now();
+    const auto factor_start = std::chrono::steady_clock::now();
+    const int info_potrf = factorize_lower_mpi_row_partitioned(
+        local_rows,
+        n,
+        rank,
+        size,
+        row_counts,
+        row_starts,
+        MPI_COMM_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
+    const auto factor_end = std::chrono::steady_clock::now();
+
+    std::vector<double> chol;
+    if (rank == 0) {
+      chol.assign(n * n, 0.0);
+    }
+
+    const auto gather_start = std::chrono::steady_clock::now();
+    MPI_Gatherv(
+        local_rows.data(),
+        sendcounts[rank],
+        MPI_DOUBLE,
+        rank == 0 ? chol.data() : nullptr,
+        sendcounts.data(),
+        displs.data(),
+        MPI_DOUBLE,
+        0,
+        MPI_COMM_WORLD);
+    const auto gather_end = std::chrono::steady_clock::now();
+
+    if (rank == 0) {
+      for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t j = i + 1; j < n; ++j) {
+          chol[i * n + j] = 0.0;
+        }
+      }
 
       int info_potrs = -1;
       std::vector<double> alpha(n, 0.0);
@@ -195,22 +314,21 @@ int main(int argc, char** argv) {
         info_potrs = 0;
       }
       const auto solve_end = std::chrono::steady_clock::now();
-      const auto gather_start = std::chrono::steady_clock::now();
+      const auto total_end = std::chrono::steady_clock::now();
+
       write_binary_vector(args.alpha_bin, alpha);
       write_binary_matrix(args.chol_bin, chol);
-      const auto gather_end = std::chrono::steady_clock::now();
-      const auto t1 = std::chrono::steady_clock::now();
 
       const double factor_seconds = std::chrono::duration<double>(factor_end - factor_start).count();
-      const double solve_seconds = std::chrono::duration<double>(solve_end - solve_start).count();
       const double gather_seconds = std::chrono::duration<double>(gather_end - gather_start).count();
-      const double total_seconds = std::chrono::duration<double>(t1 - t0).count();
+      const double solve_seconds = std::chrono::duration<double>(solve_end - solve_start).count();
+      const double total_seconds = std::chrono::duration<double>(total_end - total_start).count();
 
       std::ofstream out(args.output_meta);
       out << "{\n";
       out << "  \"implemented\": true,\n";
-      out << "  \"backend\": \"native_serial_reference\",\n";
-      out << "  \"message\": \"Numerical reference path on rank 0 only; distributed ScaLAPACK path not implemented yet.\",\n";
+      out << "  \"backend\": \"mpi_row_partitioned_reference\",\n";
+      out << "  \"message\": \"Multi-rank MPI row-partitioned Cholesky factorization with root gather/solve. BLACS/ScaLAPACK path not implemented yet.\",\n";
       out << "  \"n\": " << n << ",\n";
       out << "  \"world_size\": " << size << ",\n";
       out << "  \"info_potrf\": " << info_potrf << ",\n";
@@ -221,7 +339,7 @@ int main(int argc, char** argv) {
       out << "  \"total_seconds\": " << total_seconds << ",\n";
       out << "  \"logdet\": " << logdet << "\n";
       out << "}\n";
-      std::cerr << "[scalapack_gp_fit reference] Completed rank-0 reference solve for n=" << n << " using " << size << " MPI ranks.\n";
+      std::cerr << "[scalapack_gp_fit mpi] Completed multi-rank row-partitioned factorization for n=" << n << " using " << size << " MPI ranks.\n";
       if (info_potrf != 0) {
         exit_code = 2;
       }
