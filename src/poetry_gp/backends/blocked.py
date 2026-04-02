@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from time import perf_counter
+from pathlib import Path
 
 import numpy as np
 
 from ..gp_exact import GPState, fit_exact_gp, predict_block
+from .scalapack_fit import fit_exact_gp_scalapack_from_rated
 
 
 @dataclass
@@ -39,6 +41,14 @@ def run_blocked_step(
     block_size: int = 2048,
     optimize_hyperparameters: bool = False,
     optimizer_maxiter: int = 50,
+    fit_backend: str = "python",
+    scalapack_launcher: str = "srun",
+    scalapack_nprocs: int = 4,
+    scalapack_executable: str = "native/build/scalapack_gp_fit",
+    scalapack_block_size: int = 128,
+    scalapack_grid_rows: int | None = None,
+    scalapack_grid_cols: int | None = None,
+    scalapack_workdir: Path | None = None,
 ) -> BlockedStepResult:
     t0 = perf_counter()
     rated_indices = np.asarray(rated_indices, dtype=np.int64)
@@ -54,15 +64,35 @@ def run_blocked_step(
     x_rated = embeddings[rated_indices]
 
     fit_start = perf_counter()
-    state: GPState = fit_exact_gp(
-        x_rated,
-        ratings,
-        length_scale=length_scale,
-        variance=variance,
-        noise=noise,
-        optimize_hyperparameters=optimize_hyperparameters,
-        optimizer_maxiter=optimizer_maxiter,
-    )
+    if fit_backend == "python":
+        state: GPState = fit_exact_gp(
+            x_rated,
+            ratings,
+            length_scale=length_scale,
+            variance=variance,
+            noise=noise,
+            optimize_hyperparameters=optimize_hyperparameters,
+            optimizer_maxiter=optimizer_maxiter,
+        )
+    elif fit_backend == "native_reference":
+        if optimize_hyperparameters:
+            raise ValueError("native_reference fit backend does not support hyperparameter optimization yet")
+        state = fit_exact_gp_scalapack_from_rated(
+            x_rated,
+            ratings,
+            length_scale=length_scale,
+            variance=variance,
+            noise=noise,
+            launcher=scalapack_launcher,
+            nprocs=scalapack_nprocs,
+            executable=scalapack_executable,
+            block_size=scalapack_block_size,
+            grid_rows=scalapack_grid_rows,
+            grid_cols=scalapack_grid_cols,
+            workdir=scalapack_workdir,
+        )
+    else:
+        raise ValueError(f"Unknown fit_backend: {fit_backend}")
     fit_end = perf_counter()
 
     n = embeddings.shape[0]
@@ -104,4 +134,3 @@ def run_blocked_step(
         ),
         state=state,
     )
-

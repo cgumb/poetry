@@ -53,6 +53,29 @@ The native executable writes:
 - `alpha.bin`
 - `chol_lower.bin`
 
+## Reusing the native fit path inside the blocked GP pipeline
+
+The blocked GP backend now supports:
+
+- `fit_backend="python"` (default)
+- `fit_backend="native_reference"`
+
+This allows the existing blocked scoring path to use the native reference fit outputs by converting them back into a `GPState` with the same predictive interface as the Python/SciPy path.
+
+This is useful because it lets us compare:
+
+- same blocked scoring code
+- same candidate selection logic
+- different fit backends
+
+before the true distributed ScaLAPACK numerical path is implemented.
+
+The easiest entry point is:
+
+```bash
+python scripts/bench_step.py --backend blocked --fit-backend native_reference
+```
+
 ## Why keep this intermediate step?
 
 Because it lets us verify:
@@ -62,6 +85,7 @@ Because it lets us verify:
 - launcher behavior (`srun` / `mpirun`)
 - output metadata schema
 - agreement with SciPy on `alpha` and `logdet`
+- agreement of the blocked scoring path under different fit implementations
 
 before the implementation complexity of BLACS descriptors, block-cyclic redistribution, and ScaLAPACK calls is introduced.
 
@@ -74,4 +98,4 @@ before the implementation complexity of BLACS descriptors, block-cyclic redistri
    - ScaLAPACK Cholesky factorization
    - triangular solve
    - gather back to rank 0
-3. keep `scripts/bench_scalapack_fit.py` as the validation/benchmark entry point while transitioning from the serial native path to the distributed path
+3. keep `scripts/bench_scalapack_fit.py` and `scripts/bench_step.py` as continuity benchmarks while transitioning from the serial native path to the distributed path
