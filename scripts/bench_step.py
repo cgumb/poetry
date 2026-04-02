@@ -13,6 +13,7 @@ from poetry_gp.backends.naive import run_naive_step
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", choices=["naive", "blocked"], required=True)
+    parser.add_argument("--fit-backend", choices=["python", "native_reference"], default="python")
     parser.add_argument("--n-poems", type=int, default=5000)
     parser.add_argument("--dim", type=int, default=384)
     parser.add_argument("--m-rated", type=int, default=20)
@@ -23,6 +24,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--noise", type=float, default=1e-3)
     parser.add_argument("--optimize-hyperparameters", action="store_true")
     parser.add_argument("--optimizer-maxiter", type=int, default=50)
+    parser.add_argument("--scalapack-launcher", choices=["srun", "mpirun"], default="srun")
+    parser.add_argument("--scalapack-nprocs", type=int, default=4)
+    parser.add_argument("--scalapack-executable", default="native/build/scalapack_gp_fit")
+    parser.add_argument("--scalapack-block-size", type=int, default=128)
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args()
 
@@ -38,6 +43,8 @@ def main() -> None:
     ratings = rng.normal(size=args.m_rated)
 
     if args.backend == "naive":
+        if args.fit_backend != "python":
+            raise ValueError("naive backend currently supports only fit-backend=python")
         result = run_naive_step(
             embeddings,
             rated_indices,
@@ -59,17 +66,26 @@ def main() -> None:
             block_size=args.block_size,
             optimize_hyperparameters=args.optimize_hyperparameters,
             optimizer_maxiter=args.optimizer_maxiter,
+            fit_backend=args.fit_backend,
+            scalapack_launcher=args.scalapack_launcher,
+            scalapack_nprocs=args.scalapack_nprocs,
+            scalapack_executable=args.scalapack_executable,
+            scalapack_block_size=args.scalapack_block_size,
         )
 
     optimization_result = result.state.optimization_result or {}
     profile = {
         "backend": args.backend,
+        "fit_backend": args.fit_backend,
+        "native_backend": optimization_result.get("native_backend"),
         "n_poems": args.n_poems,
         "dim": args.dim,
         "m_rated": args.m_rated,
         "block_size": args.block_size,
         "optimize_hyperparameters": args.optimize_hyperparameters,
         "optimizer_maxiter": args.optimizer_maxiter,
+        "scalapack_nprocs": args.scalapack_nprocs,
+        "scalapack_block_size": args.scalapack_block_size,
         "fit_seconds": result.profile.fit_seconds,
         "optimize_seconds": result.profile.optimize_seconds,
         "score_seconds": result.profile.score_seconds,

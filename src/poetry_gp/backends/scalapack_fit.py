@@ -8,6 +8,9 @@ from pathlib import Path
 
 import numpy as np
 
+from ..gp_exact import GPState
+from ..kernel import rbf_kernel
+
 
 @dataclass
 class ScaLAPACKFitResult:
@@ -174,3 +177,61 @@ def fit_exact_gp_scalapack(
     if not result.implemented:
         raise NotImplementedError(result.message)
     return result
+
+
+def fit_exact_gp_scalapack_from_rated(
+    x_rated: np.ndarray,
+    y_rated: np.ndarray,
+    *,
+    length_scale: float = 1.0,
+    variance: float = 1.0,
+    noise: float = 1e-3,
+    launcher: str = "srun",
+    nprocs: int = 4,
+    executable: str = "native/build/scalapack_gp_fit",
+    block_size: int = 128,
+    grid_rows: int | None = None,
+    grid_cols: int | None = None,
+    workdir: Path | None = None,
+) -> GPState:
+    x_rated = np.asarray(x_rated, dtype=np.float64)
+    y_rated = np.asarray(y_rated, dtype=np.float64)
+    if x_rated.ndim != 2:
+        raise ValueError("x_rated must be 2D")
+    if y_rated.ndim != 1:
+        raise ValueError("y_rated must be 1D")
+    if x_rated.shape[0] != y_rated.shape[0]:
+        raise ValueError("x_rated and y_rated length mismatch")
+    if noise <= 0:
+        raise ValueError("noise must be positive")
+
+    K_rr = rbf_kernel(x_rated, x_rated, length_scale=length_scale, variance=variance)
+    K_rr.flat[:: K_rr.shape[0] + 1] += noise * noise
+    result = fit_exact_gp_scalapack(
+        K_rr,
+        y_rated,
+        launcher=launcher,
+        nprocs=nprocs,
+        executable=executable,
+        block_size=block_size,
+        grid_rows=grid_rows,
+        grid_cols=grid_cols,
+        workdir=workdir,
+    )
+    lml = -0.5 * float(y_rated @ result.alpha) - 0.5 * float(result.logdet) - 0.5 * len(y_rated) * np.log(2.0 * np.pi)
+    return GPState(
+        x_rated=x_rated,
+        y_rated=y_rated,
+        alpha=result.alpha,
+        cho_factor_data=(result.chol_lower, True),
+        length_scale=length_scale,
+        variance=variance,
+        noise=noise,
+        log_marginal_likelihood=float(lml),
+        optimization_result={
+            "fit_backend": "native_reference",
+            "native_backend": result.backend,
+            "fit_total_seconds": result.total_seconds,
+            "message": result.message,
+        },
+    )
