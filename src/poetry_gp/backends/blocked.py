@@ -48,6 +48,7 @@ def run_blocked_step(
     scalapack_block_size: int = 128,
     scalapack_grid_rows: int | None = None,
     scalapack_grid_cols: int | None = None,
+    scalapack_native_backend: str = "auto",
     scalapack_workdir: Path | None = None,
     scalapack_verbose: bool = False,
 ) -> BlockedStepResult:
@@ -90,6 +91,7 @@ def run_blocked_step(
             block_size=scalapack_block_size,
             grid_rows=scalapack_grid_rows,
             grid_cols=scalapack_grid_cols,
+            native_backend=scalapack_native_backend,
             workdir=scalapack_workdir,
             verbose=scalapack_verbose,
         )

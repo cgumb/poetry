@@ -20,10 +20,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--length-scale", type=float, default=1.0)
     parser.add_argument("--variance", type=float, default=1.0)
     parser.add_argument("--noise", type=float, default=1e-3)
-    parser.add_argument("--scalapack-launcher", choices=["srun", "mpirun"], default="srun")
+    parser.add_argument("--scalapack-launcher", choices=["srun", "mpirun", "local"], default="srun")
     parser.add_argument("--scalapack-nprocs", type=int, default=4)
     parser.add_argument("--scalapack-executable", default="native/build/scalapack_gp_fit")
     parser.add_argument("--scalapack-block-size", type=int, default=128)
+    parser.add_argument("--scalapack-native-backend", choices=["auto", "mpi", "scalapack"], default="auto")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args()
@@ -49,10 +50,7 @@ def main() -> None:
     embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-12
     rated_indices = rng.choice(args.n_poems, size=args.m_rated, replace=False)
     ratings = rng.normal(size=args.m_rated)
-    _log(
-        args.verbose,
-        f"[compare] data ready: n_poems={args.n_poems} dim={args.dim} m_rated={args.m_rated}",
-    )
+    _log(args.verbose, f"[compare] data ready: n_poems={args.n_poems} dim={args.dim} m_rated={args.m_rated}")
 
     _log(args.verbose, "[compare] running blocked step with python fit backend")
     python_start = perf_counter()
@@ -67,11 +65,7 @@ def main() -> None:
         fit_backend="python",
     )
     python_end = perf_counter()
-    _log(
-        args.verbose,
-        f"[compare] python fit finished in {python_end - python_start:.3f}s "
-        f"(fit={python_result.profile.fit_seconds:.3f}s score={python_result.profile.score_seconds:.3f}s)",
-    )
+    _log(args.verbose, f"[compare] python fit finished in {python_end - python_start:.3f}s (fit={python_result.profile.fit_seconds:.3f}s score={python_result.profile.score_seconds:.3f}s)")
 
     _log(args.verbose, "[compare] running blocked step with native fit backend")
     native_start = perf_counter()
@@ -88,14 +82,11 @@ def main() -> None:
         scalapack_nprocs=args.scalapack_nprocs,
         scalapack_executable=args.scalapack_executable,
         scalapack_block_size=args.scalapack_block_size,
+        scalapack_native_backend=args.scalapack_native_backend,
         scalapack_verbose=args.verbose,
     )
     native_end = perf_counter()
-    _log(
-        args.verbose,
-        f"[compare] native fit finished in {native_end - native_start:.3f}s "
-        f"(fit={native_result.profile.fit_seconds:.3f}s score={native_result.profile.score_seconds:.3f}s)",
-    )
+    _log(args.verbose, f"[compare] native fit finished in {native_end - native_start:.3f}s (fit={native_result.profile.fit_seconds:.3f}s score={native_result.profile.score_seconds:.3f}s)")
 
     _log(args.verbose, "[compare] computing agreement metrics")
     mean_diff = python_result.mean - native_result.mean
@@ -112,6 +103,7 @@ def main() -> None:
         "noise": args.noise,
         "scalapack_nprocs": args.scalapack_nprocs,
         "scalapack_block_size": args.scalapack_block_size,
+        "scalapack_native_backend": args.scalapack_native_backend,
         "python_fit_seconds": python_result.profile.fit_seconds,
         "native_fit_seconds": native_result.profile.fit_seconds,
         "python_score_seconds": python_result.profile.score_seconds,
@@ -132,6 +124,8 @@ def main() -> None:
         "native_backend": (native_result.state.optimization_result or {}).get("native_backend"),
         "native_message": (native_result.state.optimization_result or {}).get("message"),
         "native_workdir": (native_result.state.optimization_result or {}).get("workdir"),
+        "requested_native_backend": (native_result.state.optimization_result or {}).get("requested_native_backend"),
+        "compiled_with_scalapack": (native_result.state.optimization_result or {}).get("compiled_with_scalapack"),
         "total_script_seconds": perf_counter() - total_start,
     }
 
