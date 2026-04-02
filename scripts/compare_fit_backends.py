@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 
@@ -23,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scalapack-nprocs", type=int, default=4)
     parser.add_argument("--scalapack-executable", default="native/build/scalapack_gp_fit")
     parser.add_argument("--scalapack-block-size", type=int, default=128)
+    parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args()
 
@@ -32,15 +34,28 @@ def _safe_rel_diff(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.linalg.norm(a - b) / denom)
 
 
+def _log(enabled: bool, message: str) -> None:
+    if enabled:
+        print(message, flush=True)
+
+
 def main() -> None:
     args = parse_args()
+    total_start = perf_counter()
+    _log(args.verbose, "[compare] generating synthetic embeddings and ratings")
     rng = np.random.default_rng(args.seed)
 
     embeddings = rng.normal(size=(args.n_poems, args.dim))
     embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-12
     rated_indices = rng.choice(args.n_poems, size=args.m_rated, replace=False)
     ratings = rng.normal(size=args.m_rated)
+    _log(
+        args.verbose,
+        f"[compare] data ready: n_poems={args.n_poems} dim={args.dim} m_rated={args.m_rated}",
+    )
 
+    _log(args.verbose, "[compare] running blocked step with python fit backend")
+    python_start = perf_counter()
     python_result = run_blocked_step(
         embeddings,
         rated_indices,
@@ -51,6 +66,15 @@ def main() -> None:
         block_size=args.block_size,
         fit_backend="python",
     )
+    python_end = perf_counter()
+    _log(
+        args.verbose,
+        f"[compare] python fit finished in {python_end - python_start:.3f}s "
+        f"(fit={python_result.profile.fit_seconds:.3f}s score={python_result.profile.score_seconds:.3f}s)",
+    )
+
+    _log(args.verbose, "[compare] running blocked step with native fit backend")
+    native_start = perf_counter()
     native_result = run_blocked_step(
         embeddings,
         rated_indices,
@@ -64,8 +88,16 @@ def main() -> None:
         scalapack_nprocs=args.scalapack_nprocs,
         scalapack_executable=args.scalapack_executable,
         scalapack_block_size=args.scalapack_block_size,
+        scalapack_verbose=args.verbose,
+    )
+    native_end = perf_counter()
+    _log(
+        args.verbose,
+        f"[compare] native fit finished in {native_end - native_start:.3f}s "
+        f"(fit={native_result.profile.fit_seconds:.3f}s score={native_result.profile.score_seconds:.3f}s)",
     )
 
+    _log(args.verbose, "[compare] computing agreement metrics")
     mean_diff = python_result.mean - native_result.mean
     var_diff = python_result.variance - native_result.variance
     alpha_diff = python_result.state.alpha - native_result.state.alpha
@@ -98,6 +130,9 @@ def main() -> None:
         "python_explore_index": int(python_result.explore_index),
         "native_explore_index": int(native_result.explore_index),
         "native_backend": (native_result.state.optimization_result or {}).get("native_backend"),
+        "native_message": (native_result.state.optimization_result or {}).get("message"),
+        "native_workdir": (native_result.state.optimization_result or {}).get("workdir"),
+        "total_script_seconds": perf_counter() - total_start,
     }
 
     text = json.dumps(summary, indent=2)
