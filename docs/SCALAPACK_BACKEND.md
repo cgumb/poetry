@@ -1,37 +1,41 @@
 # ScaLAPACK backend scaffold
 
-This document describes the first scaffold for a distributed exact-GP fit backend based on ScaLAPACK concepts.
+This document describes the current scaffold for a distributed exact-GP fit backend based on ScaLAPACK concepts.
 
-## Scope of the scaffold
+## Scope of the current implementation
 
-The current scaffold does **not** implement numerical ScaLAPACK calls yet. It establishes the file-level and process-launch interface for a future native backend.
+The backend interface is now functional end-to-end, but the numerical work is still a **rank-0 reference path**, not a distributed ScaLAPACK implementation.
 
-The intended division of labor is:
+The current division of labor is:
 
 - Python assembles the rated-set covariance matrix `K_rr` and the right-hand side `y`
 - a native MPI executable reads those files
-- the native executable will eventually distribute the matrix in block-cyclic format and run Cholesky + solve
-- Python will read back `alpha`, the Cholesky factor, and timing metadata
+- rank 0 performs a serial Cholesky + solve reference computation
+- the executable writes back `alpha`, the Cholesky factor, and timing metadata
 
-## Files added
+This means the file-level and launch contract is now stable enough to benchmark and validate against SciPy while the actual distributed BLACS/ScaLAPACK path is implemented.
+
+## Files
 
 - `native/CMakeLists.txt`
 - `native/scalapack_gp_fit.cpp`
 - `src/poetry_gp/backends/scalapack_fit.py`
 - `scripts/run_scalapack_fit_demo.py`
+- `scripts/bench_scalapack_fit.py`
 
 ## Current native behavior
 
-The native executable currently validates the file interface and writes placeholder output files plus metadata indicating that the backend is still a scaffold.
+The native executable now:
 
-This allows us to stabilize:
+- validates the file interface
+- reads a dense SPD matrix and RHS written by Python
+- computes a **serial numerical reference solve on rank 0**
+- writes:
+  - `alpha.bin`
+  - `chol_lower.bin`
+  - `output_meta.json`
 
-- input/output file naming
-- metadata schema
-- launch commands (`srun` / `mpirun`)
-- the Python wrapper contract
-
-before implementing the actual distributed dense linear algebra.
+The metadata records the backend name as `native_serial_reference` to make it clear that this is not yet the distributed path.
 
 ## Input files
 
@@ -43,18 +47,31 @@ The Python wrapper writes:
 
 ## Output files
 
-The native scaffold writes:
+The native executable writes:
 
 - `output_meta.json`
 - `alpha.bin`
 - `chol_lower.bin`
 
+## Why keep this intermediate step?
+
+Because it lets us verify:
+
+- binary I/O conventions
+- CLI arguments
+- launcher behavior (`srun` / `mpirun`)
+- output metadata schema
+- agreement with SciPy on `alpha` and `logdet`
+
+before the implementation complexity of BLACS descriptors, block-cyclic redistribution, and ScaLAPACK calls is introduced.
+
 ## Next implementation steps
 
 1. add BLACS/ScaLAPACK discovery and linkage in `native/CMakeLists.txt`
-2. replace placeholder outputs in `native/scalapack_gp_fit.cpp` with:
-   - distributed matrix setup
-   - Cholesky factorization
+2. replace the rank-0 reference path in `native/scalapack_gp_fit.cpp` with:
+   - process-grid setup
+   - block-cyclic matrix distribution
+   - ScaLAPACK Cholesky factorization
    - triangular solve
    - gather back to rank 0
-3. add a fit benchmark comparing SciPy and the ScaLAPACK backend
+3. keep `scripts/bench_scalapack_fit.py` as the validation/benchmark entry point while transitioning from the serial native path to the distributed path

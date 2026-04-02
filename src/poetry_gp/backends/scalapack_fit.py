@@ -24,6 +24,7 @@ class ScaLAPACKFitResult:
     info_potrf: int
     info_potrs: int
     implemented: bool
+    backend: str
     message: str
     workdir: Path
 
@@ -164,9 +165,12 @@ def fit_exact_gp_scalapack(
         info_potrf=int(meta.get("info_potrf", -1)),
         info_potrs=int(meta.get("info_potrs", -1)),
         implemented=bool(meta.get("implemented", False)),
+        backend=str(meta.get("backend", "unknown")),
         message=str(meta.get("message", "")),
         workdir=prepared.workdir,
     )
+    if result.info_potrf != 0 or result.info_potrs not in {0, -1}:
+        raise RuntimeError(result.message)
     if not result.implemented:
         raise NotImplementedError(result.message)
     return result
