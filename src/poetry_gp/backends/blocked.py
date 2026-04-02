@@ -60,7 +60,7 @@ def run_blocked_step(
         length_scale=length_scale,
         variance=variance,
         noise=noise,
-        optimize_hyperparameters=optimize_hyperpareters,
+        optimize_hyperparameters=optimize_hyperparameters,
         optimizer_maxiter=optimizer_maxiter,
     )
     fit_end = perf_counter()
@@ -104,3 +104,4 @@ def run_blocked_step(
         ),
         state=state,
     )
+
