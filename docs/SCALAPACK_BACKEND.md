@@ -84,6 +84,31 @@ python scripts/bench_sweep.py \
   --fit-backends python,native_reference
 ```
 
+## Agreement / continuity check
+
+Before replacing the rank-0 native reference path with a true distributed implementation, it is useful to verify that the blocked GP pipeline produces nearly identical outputs under:
+
+- `fit_backend="python"`
+- `fit_backend="native_reference"`
+
+The repo now includes a dedicated comparison script:
+
+```bash
+python scripts/compare_fit_backends.py \
+  --n-poems 5000 \
+  --m-rated 20
+```
+
+This reports differences in:
+
+- posterior mean
+- posterior variance
+- GP weights (`alpha`)
+- log marginal likelihood
+- exploit / explore selections
+
+That gives us a continuity benchmark to rerun later when the true ScaLAPACK numerical path replaces the rank-0 reference path.
+
 ## Why keep this intermediate step?
 
 Because it lets us verify:
@@ -106,4 +131,4 @@ before the implementation complexity of BLACS descriptors, block-cyclic redistri
    - ScaLAPACK Cholesky factorization
    - triangular solve
    - gather back to rank 0
-3. keep `scripts/bench_scalapack_fit.py`, `scripts/bench_step.py`, and `scripts/bench_sweep.py` as continuity benchmarks while transitioning from the serial native path to the distributed path
+3. keep `scripts/bench_scalapack_fit.py`, `scripts/bench_step.py`, `scripts/bench_sweep.py`, and `scripts/compare_fit_backends.py` as continuity benchmarks while transitioning from the serial native path to the distributed path
