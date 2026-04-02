@@ -70,10 +70,18 @@ This is useful because it lets us compare:
 
 before the true distributed ScaLAPACK numerical path is implemented.
 
-The easiest entry point is:
+The easiest entry points are:
 
 ```bash
 python scripts/bench_step.py --backend blocked --fit-backend native_reference
+```
+
+and a broader sweep:
+
+```bash
+python scripts/bench_sweep.py \
+  --backends blocked \
+  --fit-backends python,native_reference
 ```
 
 ## Why keep this intermediate step?
@@ -98,4 +106,4 @@ before the implementation complexity of BLACS descriptors, block-cyclic redistri
    - ScaLAPACK Cholesky factorization
    - triangular solve
    - gather back to rank 0
-3. keep `scripts/bench_scalapack_fit.py` and `scripts/bench_step.py` as continuity benchmarks while transitioning from the serial native path to the distributed path
+3. keep `scripts/bench_scalapack_fit.py`, `scripts/bench_step.py`, and `scripts/bench_sweep.py` as continuity benchmarks while transitioning from the serial native path to the distributed path
