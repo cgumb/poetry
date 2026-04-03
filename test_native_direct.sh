@@ -48,9 +48,12 @@ print(f"x shape: {x.shape}")
 print(f"y shape: {y.shape}")
 EOF
 
-# Run native code directly
+# Run native code directly with ScaLAPACK (Milestone 1B)
 echo ""
-echo "Running native code..."
+echo "========================================="
+echo "Testing Milestone 1B: Distributed Assembly"
+echo "========================================="
+echo ""
 mpirun -np 1 native/build/scalapack_gp_fit \
   --input-meta /tmp/test_native/input_meta.json \
   --matrix-bin /tmp/test_native/features.bin \
@@ -58,7 +61,7 @@ mpirun -np 1 native/build/scalapack_gp_fit \
   --output-meta /tmp/test_native/output.json \
   --alpha-bin /tmp/test_native/alpha.bin \
   --chol-bin /tmp/test_native/chol.bin \
-  --backend mpi \
+  --backend scalapack \
   --block-size 64
 
 echo ""

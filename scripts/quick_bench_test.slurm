@@ -60,19 +60,19 @@ M_RATED_LIST="100 500 1000 2000"
 for m_rated in $M_RATED_LIST; do
   echo "=== m_rated=$m_rated ==="
 
-  # Skip Python baseline for faster debugging
-  # echo "  Python (1 thread)..."
-  # python -u scripts/bench_step.py \
-  #   --backend blocked \
-  #   --fit-backend python \
-  #   --n-poems 10000 \
-  #   --m-rated $m_rated \
-  #   --seed 42 \
-  #   --output-csv "$OUTPUT_CSV" \
-  #   --append
+  # Python baseline
+  echo "  Python (1 thread)..."
+  python -u scripts/bench_step.py \
+    --backend blocked \
+    --fit-backend python \
+    --n-poems 10000 \
+    --m-rated $m_rated \
+    --seed 42 \
+    --output-csv "$OUTPUT_CSV" \
+    --append
 
-  # MPI reference with 1 process (to test if it's a ScaLAPACK-specific issue)
-  echo "  MPI reference (1 process)..."
+  # ScaLAPACK with 1 process (Milestone 1B: distributed assembly)
+  echo "  ScaLAPACK (1 process, Milestone 1B)..."
   python -u scripts/bench_step.py \
     --backend blocked \
     --fit-backend native_reference \
@@ -82,24 +82,24 @@ for m_rated in $M_RATED_LIST; do
     --scalapack-launcher mpirun \
     --scalapack-nprocs 1 \
     --scalapack-block-size 64 \
-    --scalapack-native-backend mpi \
+    --scalapack-native-backend scalapack \
     --output-csv "$OUTPUT_CSV" \
     --append
 
-  # Skip ScaLAPACK tests for now - debugging MPI reference first
-  # echo "  ScaLAPACK (4 processes, bs=64)..."
-  # python -u scripts/bench_step.py \
-  #   --backend blocked \
-  #   --fit-backend native_reference \
-  #   --n-poems 10000 \
-  #   --m-rated $m_rated \
-  #   --seed 42 \
-  #   --scalapack-launcher mpirun \
-  #   --scalapack-nprocs 4 \
-  #   --scalapack-block-size 64 \
-  #   --scalapack-native-backend scalapack \
-  #   --output-csv "$OUTPUT_CSV" \
-  #   --append
+  # ScaLAPACK with 4 processes (Milestone 1B: parallel assembly!)
+  echo "  ScaLAPACK (4 processes, Milestone 1B)..."
+  python -u scripts/bench_step.py \
+    --backend blocked \
+    --fit-backend native_reference \
+    --n-poems 10000 \
+    --m-rated $m_rated \
+    --seed 42 \
+    --scalapack-launcher mpirun \
+    --scalapack-nprocs 4 \
+    --scalapack-block-size 64 \
+    --scalapack-native-backend scalapack \
+    --output-csv "$OUTPUT_CSV" \
+    --append
 
   echo ""
 done
