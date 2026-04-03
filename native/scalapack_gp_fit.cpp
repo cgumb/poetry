@@ -859,7 +859,8 @@ NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<
   const int nprow = choose_nprow(size);
   const int npcol = size / nprow;
   int ictxt = 0;
-  Cblacs_get(-1, 0, &ictxt);
+  // Get BLACS context from MPI communicator (use 0 instead of -1)
+  Cblacs_get(0, 0, &ictxt);
   Cblacs_gridinit(&ictxt, "R", nprow, npcol);
   int myrow = -1;
   int mycol = -1;
@@ -962,7 +963,8 @@ NativeResult run_scalapack_distributed(
   int ictxt = 0;
   std::cerr << "[DEBUG GRID] ictxt before Cblacs_get: " << ictxt << std::endl;
 
-  Cblacs_get(-1, 0, &ictxt);
+  // Get BLACS context from MPI communicator (use 0 instead of -1)
+  Cblacs_get(0, 0, &ictxt);
   std::cerr << "[DEBUG GRID] ictxt after Cblacs_get: " << ictxt << std::endl;
 
   Cblacs_gridinit(&ictxt, "R", nprow, npcol);
