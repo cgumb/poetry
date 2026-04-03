@@ -9,9 +9,9 @@ import numpy as np
 import json
 from pathlib import Path
 
-# Small test problem
+# Test problem (larger to avoid nb > n issues)
 np.random.seed(42)
-n = 10
+n = 100  # Larger than block size (64)
 d = 384
 
 # Generate features
