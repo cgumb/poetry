@@ -8,6 +8,7 @@ option(POETRY_ENABLE_SCALAPACK "Enable discovery and linkage of a ScaLAPACK libr
 set(POETRY_SCALAPACK_LIBRARY "" CACHE STRING "Optional explicit path to a ScaLAPACK library")
 
 find_package(MPI REQUIRED)
+find_package(BLAS REQUIRED)
 
 set(POETRY_SCALAPACK_FOUND FALSE)
 set(POETRY_SCALAPACK_LIBRARIES "")
@@ -33,11 +34,10 @@ if(POETRY_ENABLE_SCALAPACK)
 endif()
 
 add_executable(scalapack_gp_fit scalapack_gp_fit_entry.cpp)
-target_link_libraries(scalapack_gp_fit PRIVATE MPI::MPI_CXX)
+target_link_libraries(scalapack_gp_fit PRIVATE MPI::MPI_CXX ${BLAS_LIBRARIES})
 
-# Intentionally do not add a second generic BLAS/LAPACK stack here.
-# The discovered/shared ScaLAPACK library should bring along its own BLAS
-# dependency chain from the same managed environment.
+# Link BLAS for kernel assembly (dgemm)
+# ScaLAPACK will bring its own BLAS, but we need it even without ScaLAPACK
 if(POETRY_SCALAPACK_FOUND)
   target_link_libraries(scalapack_gp_fit PRIVATE ${POETRY_SCALAPACK_LIBRARIES})
   target_compile_definitions(scalapack_gp_fit PRIVATE HAVE_SCALAPACK=1)
