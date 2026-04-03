@@ -8,8 +8,6 @@ option(POETRY_ENABLE_SCALAPACK "Enable discovery and linkage of a ScaLAPACK libr
 set(POETRY_SCALAPACK_LIBRARY "" CACHE STRING "Optional explicit path to a ScaLAPACK library")
 
 find_package(MPI REQUIRED)
-find_package(BLAS)
-find_package(LAPACK)
 
 set(POETRY_SCALAPACK_FOUND FALSE)
 set(POETRY_SCALAPACK_LIBRARIES "")
@@ -20,7 +18,7 @@ if(POETRY_ENABLE_SCALAPACK)
       set(POETRY_SCALAPACK_FOUND TRUE)
       set(POETRY_SCALAPACK_LIBRARIES "${POETRY_SCALAPACK_LIBRARY}")
     else()
-      message(WARNING "POETRY_SCALAPACK_LIBRARY was provided but does not exist: ${POETRY_SCALAPACK_LIBRARY}")
+      message(FATAL_ERROR "POETRY_SCALAPACK_LIBRARY does not exist: ${POETRY_SCALAPACK_LIBRARY}")
     endif()
   else()
     find_library(
@@ -37,18 +35,13 @@ endif()
 add_executable(scalapack_gp_fit scalapack_gp_fit.cpp)
 target_link_libraries(scalapack_gp_fit PRIVATE MPI::MPI_CXX)
 
-if(BLAS_FOUND)
-  target_link_libraries(scalapack_gp_fit PRIVATE BLAS::BLAS)
-endif()
-
-if(LAPACK_FOUND)
-  target_link_libraries(scalapack_gp_fit PRIVATE LAPACK::LAPACK)
-endif()
-
+# Intentionally do not add a second generic BLAS/LAPACK stack here.
+# The discovered/shared ScaLAPACK library should bring along its own BLAS
+# dependency chain from the same managed environment.
 if(POETRY_SCALAPACK_FOUND)
   target_link_libraries(scalapack_gp_fit PRIVATE ${POETRY_SCALAPACK_LIBRARIES})
   target_compile_definitions(scalapack_gp_fit PRIVATE HAVE_SCALAPACK=1)
   message(STATUS "ScaLAPACK support enabled: ${POETRY_SCALAPACK_LIBRARIES}")
 else()
-  message(STATUS "ScaLAPACK support not found; the executable will still build with the MPI reference backend only")
+  message(STATUS "ScaLAPACK support not found; building MPI reference backend only")
 endif()
