@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -28,7 +30,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scalapack-nprocs", type=int, default=4)
     parser.add_argument("--scalapack-executable", default="native/build/scalapack_gp_fit")
     parser.add_argument("--scalapack-block-size", type=int, default=128)
+    parser.add_argument("--scalapack-native-backend", choices=["auto", "mpi", "scalapack"], default="auto")
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--output-csv", type=Path, default=None, help="Output results to CSV file")
+    parser.add_argument("--append", action="store_true", help="Append to CSV file instead of overwriting")
     return parser.parse_args()
 
 
@@ -71,6 +76,7 @@ def main() -> None:
             scalapack_nprocs=args.scalapack_nprocs,
             scalapack_executable=args.scalapack_executable,
             scalapack_block_size=args.scalapack_block_size,
+            scalapack_native_backend=args.scalapack_native_backend,
         )
 
     optimization_result = result.state.optimization_result or {}
@@ -102,12 +108,80 @@ def main() -> None:
         "explore_index": result.explore_index,
     }
 
-    text = json.dumps(profile, indent=2)
-    if args.output is None:
-        print(text)
-    else:
+    # Output JSON if requested
+    if args.output is not None:
+        text = json.dumps(profile, indent=2)
         args.output.write_text(text)
         print(f"wrote benchmark result to {args.output}")
+    elif args.output_csv is None:
+        # Default: print JSON to stdout
+        text = json.dumps(profile, indent=2)
+        print(text)
+
+    # Output CSV if requested
+    if args.output_csv is not None:
+        fieldnames = [
+            "timestamp",
+            "backend",
+            "fit_backend",
+            "native_backend",
+            "n_poems",
+            "dim",
+            "m_rated",
+            "block_size",
+            "scalapack_nprocs",
+            "scalapack_block_size",
+            "fit_seconds",
+            "optimize_seconds",
+            "score_seconds",
+            "select_seconds",
+            "total_seconds",
+            "length_scale",
+            "variance",
+            "noise",
+            "log_marginal_likelihood",
+            "optimize_hyperparameters",
+            "optimization_success",
+            "used_optimized_params",
+        ]
+
+        csv_row = {
+            "timestamp": datetime.now().isoformat(),
+            "backend": profile["backend"],
+            "fit_backend": profile["fit_backend"],
+            "native_backend": profile.get("native_backend", ""),
+            "n_poems": profile["n_poems"],
+            "dim": profile["dim"],
+            "m_rated": profile["m_rated"],
+            "block_size": profile["block_size"],
+            "scalapack_nprocs": profile.get("scalapack_nprocs", ""),
+            "scalapack_block_size": profile.get("scalapack_block_size", ""),
+            "fit_seconds": profile["fit_seconds"],
+            "optimize_seconds": profile["optimize_seconds"],
+            "score_seconds": profile["score_seconds"],
+            "select_seconds": profile["select_seconds"],
+            "total_seconds": profile["total_seconds"],
+            "length_scale": profile["length_scale"],
+            "variance": profile["variance"],
+            "noise": profile["noise"],
+            "log_marginal_likelihood": profile.get("log_marginal_likelihood", ""),
+            "optimize_hyperparameters": profile["optimize_hyperparameters"],
+            "optimization_success": profile.get("optimization_success", ""),
+            "used_optimized_params": profile.get("used_optimized_params", ""),
+        }
+
+        # Write or append to CSV
+        file_exists = args.output_csv.exists()
+        mode = "a" if args.append and file_exists else "w"
+
+        args.output_csv.parent.mkdir(parents=True, exist_ok=True)
+        with args.output_csv.open(mode, newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if mode == "w" or not file_exists:
+                writer.writeheader()
+            writer.writerow(csv_row)
+
+        print(f"appended benchmark result to {args.output_csv}" if args.append else f"wrote benchmark result to {args.output_csv}")
 
 
 if __name__ == "__main__":
