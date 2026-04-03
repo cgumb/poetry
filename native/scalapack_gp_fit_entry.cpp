@@ -146,7 +146,16 @@ std::vector<double> build_dense_rbf_matrix_from_features_entry(
     double length_scale,
     double variance,
     double noise) {
+  std::cerr << "[DEBUG] build_dense_rbf_matrix: n=" << n << " d=" << d << " x.size()=" << x.size() << std::endl;
+
+  // Verify x has correct size
+  if (x.size() != n * static_cast<std::size_t>(d)) {
+    std::cerr << "[ERROR] x.size()=" << x.size() << " but expected n*d=" << (n * d) << std::endl;
+    throw std::runtime_error("Feature matrix size mismatch");
+  }
+
   // Step 1: Compute row norms ||x[i]||^2
+  std::cerr << "[DEBUG] Computing norms..." << std::endl;
   std::vector<double> norms(n, 0.0);
   for (std::size_t i = 0; i < n; ++i) {
     double sum = 0.0;
@@ -156,6 +165,7 @@ std::vector<double> build_dense_rbf_matrix_from_features_entry(
     }
     norms[i] = sum;
   }
+  std::cerr << "[DEBUG] Norms computed" << std::endl;
 
   // Step 2: Compute Gram matrix G = X @ X^T using BLAS DGEMM
   // This replaces the O(n^2*d) triple loop with optimized BLAS
@@ -175,11 +185,16 @@ std::vector<double> build_dense_rbf_matrix_from_features_entry(
   const double beta = 0.0;
 
   // G(n×n) = A^T(n×d) @ A(d×n)
+  std::cerr << "[DEBUG] About to call DGEMM: M=" << n_int << " N=" << n_int << " K=" << d << std::endl;
+  std::cerr << "[DEBUG] gram.size()=" << gram.size() << " (expected " << (n*n) << ")" << std::endl;
+
   dgemm_(&transa, &transb,
          &n_int, &n_int, &d,        // M, N, K dimensions
          &alpha, x.data(), &d,      // A, LDA=d (leading dim of d×n array)
          x.data(), &d,              // B, LDB=d
          &beta, gram.data(), &n_int); // C, LDC=n
+
+  std::cerr << "[DEBUG] DGEMM completed successfully" << std::endl;
 
   // Step 3: Apply RBF kernel transformation
   // K[i,j] = variance * exp(-0.5 * ||x[i] - x[j]||^2 / length_scale^2)
@@ -198,10 +213,12 @@ std::vector<double> build_dense_rbf_matrix_from_features_entry(
   }
 
   // Step 4: Add noise to diagonal
+  std::cerr << "[DEBUG] Adding noise to diagonal..." << std::endl;
   for (std::size_t i = 0; i < n; ++i) {
     matrix[i * n + i] += noise * noise;
   }
 
+  std::cerr << "[DEBUG] build_dense_rbf_matrix completed successfully" << std::endl;
   return matrix;
 }
 
