@@ -99,7 +99,16 @@ def prepare_scalapack_fit_workdir(
     if launcher == "srun":
         command = [launcher, "-n", str(nprocs), executable]
     elif launcher == "mpirun":
-        command = [launcher, "-np", str(nprocs), executable]
+        command = [
+            launcher,
+            "--bind-to",
+            "none",
+            "--map-by",
+            "slot",
+            "-np",
+            str(nprocs),
+            executable,
+        ]
     elif launcher in {"local", "none"}:
         if nprocs != 1:
             raise ValueError("launcher='local' requires nprocs=1")

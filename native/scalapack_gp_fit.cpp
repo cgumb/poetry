@@ -14,7 +14,6 @@
 
 #ifdef HAVE_SCALAPACK
 extern "C" {
-void Cblacs_pinfo(int* mypnum, int* nprocs);
 void Cblacs_get(int context, int request, int* value);
 void Cblacs_gridinit(int* context, const char* order, int nprow, int npcol);
 void Cblacs_gridinfo(int context, int* nprow, int* npcol, int* myrow, int* mycol);
@@ -354,12 +353,28 @@ NativeResult run_mpi_reference(std::size_t n, int rank, int size, const std::vec
 }
 
 #ifdef HAVE_SCALAPACK
+namespace {
+constexpr int TAG_MATRIX_HEADER = 100;
+constexpr int TAG_MATRIX_TILE = 101;
+constexpr int TAG_RHS_VECTOR = 110;
+constexpr int TAG_GATHER_MATRIX = 200;
+constexpr int TAG_GATHER_ALPHA = 210;
+}
+
+int numroc_wrapper(int n, int nb, int iproc, int isrcproc, int nprocs) {
+  return numroc_(&n, &nb, &iproc, &isrcproc, &nprocs);
+}
+
 int choose_nprow(int size) {
   int nprow = static_cast<int>(std::floor(std::sqrt(static_cast<double>(size))));
   while (nprow > 1 && size % nprow != 0) {
     --nprow;
   }
   return std::max(1, nprow);
+}
+
+int grid_rank(int prow, int pcol, int npcol) {
+  return prow * npcol + pcol;
 }
 
 int block_owner(int gidx, int nb, int nprocs_dim) {
@@ -373,11 +388,297 @@ int local_index(int gidx, int nb, int nprocs_dim) {
   return local_block * nb + inblock;
 }
 
+int owned_tile_count(int n, int nb, int myrow, int mycol, int nprow, int npcol) {
+  int count = 0;
+  for (int gi0 = myrow * nb; gi0 < n; gi0 += nprow * nb) {
+    for (int gj0 = mycol * nb; gj0 < n; gj0 += npcol * nb) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+void copy_global_tile_to_local_column_major(
+    const std::vector<double>& global_matrix,
+    std::size_t n,
+    int global_i0,
+    int global_j0,
+    int rows,
+    int cols,
+    std::vector<double>& local_matrix,
+    int lld_local,
+    int local_i0,
+    int local_j0) {
+  for (int dj = 0; dj < cols; ++dj) {
+    for (int di = 0; di < rows; ++di) {
+      local_matrix[static_cast<std::size_t>(local_i0 + di) + static_cast<std::size_t>(local_j0 + dj) * lld_local] =
+          global_matrix[static_cast<std::size_t>(global_i0 + di) * n + static_cast<std::size_t>(global_j0 + dj)];
+    }
+  }
+}
+
+void pack_column_major_tile_from_global(
+    const std::vector<double>& global_matrix,
+    std::size_t n,
+    int global_i0,
+    int global_j0,
+    int rows,
+    int cols,
+    std::vector<double>& tile) {
+  tile.assign(static_cast<std::size_t>(rows) * cols, 0.0);
+  for (int dj = 0; dj < cols; ++dj) {
+    for (int di = 0; di < rows; ++di) {
+      tile[static_cast<std::size_t>(di) + static_cast<std::size_t>(dj) * rows] =
+          global_matrix[static_cast<std::size_t>(global_i0 + di) * n + static_cast<std::size_t>(global_j0 + dj)];
+    }
+  }
+}
+
+void unpack_rank_local_matrix_to_root(
+    const std::vector<double>& local_matrix,
+    std::vector<double>& global_matrix,
+    std::size_t n,
+    int nb,
+    int proc_row,
+    int proc_col,
+    int nprow,
+    int npcol,
+    int lld_local) {
+  for (int global_i0 = proc_row * nb; global_i0 < static_cast<int>(n); global_i0 += nprow * nb) {
+    const int rows = std::min(nb, static_cast<int>(n) - global_i0);
+    const int local_i0 = local_index(global_i0, nb, nprow);
+    for (int global_j0 = proc_col * nb; global_j0 < static_cast<int>(n); global_j0 += npcol * nb) {
+      const int cols = std::min(nb, static_cast<int>(n) - global_j0);
+      const int local_j0 = local_index(global_j0, nb, npcol);
+      for (int dj = 0; dj < cols; ++dj) {
+        for (int di = 0; di < rows; ++di) {
+          global_matrix[static_cast<std::size_t>(global_i0 + di) * n + static_cast<std::size_t>(global_j0 + dj)] =
+              local_matrix[static_cast<std::size_t>(local_i0 + di) + static_cast<std::size_t>(local_j0 + dj) * lld_local];
+        }
+      }
+    }
+  }
+}
+
+void distribute_matrix_block_cyclic(
+    const std::vector<double>& full_matrix_root,
+    std::size_t n,
+    int nb,
+    int rank,
+    int nprow,
+    int npcol,
+    int myrow,
+    int mycol,
+    int lld_a,
+    std::vector<double>& local_a,
+    MPI_Comm comm) {
+  const int n_int = static_cast<int>(n);
+  if (rank == 0) {
+    std::vector<double> tile;
+    for (int global_i0 = 0; global_i0 < n_int; global_i0 += nb) {
+      const int rows = std::min(nb, n_int - global_i0);
+      const int owner_row = block_owner(global_i0, nb, nprow);
+      for (int global_j0 = 0; global_j0 < n_int; global_j0 += nb) {
+        const int cols = std::min(nb, n_int - global_j0);
+        const int owner_col = block_owner(global_j0, nb, npcol);
+        const int owner_rank = grid_rank(owner_row, owner_col, npcol);
+        if (owner_rank == 0) {
+          const int local_i0 = local_index(global_i0, nb, nprow);
+          const int local_j0 = local_index(global_j0, nb, npcol);
+          copy_global_tile_to_local_column_major(full_matrix_root, n, global_i0, global_j0, rows, cols, local_a, lld_a, local_i0, local_j0);
+        } else {
+          int header[4] = {global_i0, global_j0, rows, cols};
+          MPI_Send(header, 4, MPI_INT, owner_rank, TAG_MATRIX_HEADER, comm);
+          pack_column_major_tile_from_global(full_matrix_root, n, global_i0, global_j0, rows, cols, tile);
+          MPI_Send(tile.data(), static_cast<int>(tile.size()), MPI_DOUBLE, owner_rank, TAG_MATRIX_TILE, comm);
+        }
+      }
+    }
+  } else {
+    const int expected = owned_tile_count(n_int, nb, myrow, mycol, nprow, npcol);
+    for (int tile_idx = 0; tile_idx < expected; ++tile_idx) {
+      int header[4];
+      MPI_Recv(header, 4, MPI_INT, 0, TAG_MATRIX_HEADER, comm, MPI_STATUS_IGNORE);
+      const int global_i0 = header[0];
+      const int global_j0 = header[1];
+      const int rows = header[2];
+      const int cols = header[3];
+      std::vector<double> tile(static_cast<std::size_t>(rows) * cols, 0.0);
+      MPI_Recv(tile.data(), static_cast<int>(tile.size()), MPI_DOUBLE, 0, TAG_MATRIX_TILE, comm, MPI_STATUS_IGNORE);
+      const int local_i0 = local_index(global_i0, nb, nprow);
+      const int local_j0 = local_index(global_j0, nb, npcol);
+      for (int dj = 0; dj < cols; ++dj) {
+        for (int di = 0; di < rows; ++di) {
+          local_a[static_cast<std::size_t>(local_i0 + di) + static_cast<std::size_t>(local_j0 + dj) * lld_a] =
+              tile[static_cast<std::size_t>(di) + static_cast<std::size_t>(dj) * rows];
+        }
+      }
+    }
+  }
+}
+
+void distribute_rhs_block_cyclic(
+    const std::vector<double>& rhs_root,
+    std::size_t n,
+    int nb,
+    int rank,
+    int nprow,
+    int npcol,
+    int myrow,
+    int mycol,
+    int local_rows,
+    std::vector<double>& local_b,
+    MPI_Comm comm) {
+  if (rank == 0) {
+    std::vector<std::vector<double>> rank_buffers(static_cast<std::size_t>(nprow));
+    for (int prow = 0; prow < nprow; ++prow) {
+      const int rows_for_rank = numroc_wrapper(static_cast<int>(n), nb, prow, 0, nprow);
+      rank_buffers[static_cast<std::size_t>(prow)].assign(rows_for_rank, 0.0);
+    }
+    for (int global_i = 0; global_i < static_cast<int>(n); ++global_i) {
+      const int owner_row = block_owner(global_i, nb, nprow);
+      const int local_i = local_index(global_i, nb, nprow);
+      rank_buffers[static_cast<std::size_t>(owner_row)][static_cast<std::size_t>(local_i)] = rhs_root[static_cast<std::size_t>(global_i)];
+    }
+
+    for (int prow = 0; prow < nprow; ++prow) {
+      const int owner_rank = grid_rank(prow, 0, npcol);
+      const int rows_for_rank = static_cast<int>(rank_buffers[static_cast<std::size_t>(prow)].size());
+      if (owner_rank == 0) {
+        if (mycol == 0 && local_rows > 0) {
+          std::copy(rank_buffers[static_cast<std::size_t>(prow)].begin(), rank_buffers[static_cast<std::size_t>(prow)].end(), local_b.begin());
+        }
+      } else if (rows_for_rank > 0) {
+        MPI_Send(rank_buffers[static_cast<std::size_t>(prow)].data(), rows_for_rank, MPI_DOUBLE, owner_rank, TAG_RHS_VECTOR, comm);
+      }
+    }
+  } else if (mycol == 0 && local_rows > 0) {
+    MPI_Recv(local_b.data(), local_rows, MPI_DOUBLE, 0, TAG_RHS_VECTOR, comm, MPI_STATUS_IGNORE);
+  }
+}
+
+double distributed_logdet_from_local_cholesky(
+    const std::vector<double>& local_a,
+    std::size_t n,
+    int nb,
+    int myrow,
+    int mycol,
+    int nprow,
+    int npcol,
+    int lld_a,
+    MPI_Comm comm) {
+  double local_sum = 0.0;
+  for (int global_i = 0; global_i < static_cast<int>(n); ++global_i) {
+    if (block_owner(global_i, nb, nprow) == myrow && block_owner(global_i, nb, npcol) == mycol) {
+      const int local_i = local_index(global_i, nb, nprow);
+      const int local_j = local_index(global_i, nb, npcol);
+      local_sum += std::log(local_a[static_cast<std::size_t>(local_i) + static_cast<std::size_t>(local_j) * lld_a]);
+    }
+  }
+  double global_sum = 0.0;
+  MPI_Reduce(&local_sum, &global_sum, 1, MPI_DOUBLE, MPI_SUM, 0, comm);
+  return 2.0 * global_sum;
+}
+
+std::vector<double> gather_alpha_to_root(
+    std::size_t n,
+    int nb,
+    int rank,
+    int size,
+    int nprow,
+    int npcol,
+    int myrow,
+    int mycol,
+    int local_rows,
+    const std::vector<double>& local_b,
+    MPI_Comm comm) {
+  std::vector<double> alpha;
+  if (rank == 0) {
+    alpha.assign(n, 0.0);
+    if (mycol == 0 && local_rows > 0) {
+      for (int global_i = 0; global_i < static_cast<int>(n); ++global_i) {
+        if (block_owner(global_i, nb, nprow) == myrow) {
+          const int local_i = local_index(global_i, nb, nprow);
+          alpha[static_cast<std::size_t>(global_i)] = local_b[static_cast<std::size_t>(local_i)];
+        }
+      }
+    }
+    for (int r = 1; r < size; ++r) {
+      const int proc_row = r / npcol;
+      const int proc_col = r % npcol;
+      if (proc_col != 0) {
+        continue;
+      }
+      const int rows_for_rank = numroc_wrapper(static_cast<int>(n), nb, proc_row, 0, nprow);
+      if (rows_for_rank <= 0) {
+        continue;
+      }
+      std::vector<double> recvbuf(rows_for_rank, 0.0);
+      MPI_Recv(recvbuf.data(), rows_for_rank, MPI_DOUBLE, r, TAG_GATHER_ALPHA, comm, MPI_STATUS_IGNORE);
+      for (int global_i0 = proc_row * nb; global_i0 < static_cast<int>(n); global_i0 += nprow * nb) {
+        const int rows = std::min(nb, static_cast<int>(n) - global_i0);
+        const int local_i0 = local_index(global_i0, nb, nprow);
+        for (int di = 0; di < rows; ++di) {
+          alpha[static_cast<std::size_t>(global_i0 + di)] = recvbuf[static_cast<std::size_t>(local_i0 + di)];
+        }
+      }
+    }
+  } else if (mycol == 0 && local_rows > 0) {
+    MPI_Send(local_b.data(), local_rows, MPI_DOUBLE, 0, TAG_GATHER_ALPHA, comm);
+  }
+  return alpha;
+}
+
+std::vector<double> gather_local_matrix_to_root(
+    std::size_t n,
+    int nb,
+    int rank,
+    int size,
+    int nprow,
+    int npcol,
+    int myrow,
+    int mycol,
+    int lld_a,
+    int local_rows,
+    int local_cols,
+    const std::vector<double>& local_a,
+    MPI_Comm comm) {
+  std::vector<double> chol;
+  if (rank == 0) {
+    chol.assign(n * n, 0.0);
+    unpack_rank_local_matrix_to_root(local_a, chol, n, nb, myrow, mycol, nprow, npcol, lld_a);
+    for (int r = 1; r < size; ++r) {
+      const int proc_row = r / npcol;
+      const int proc_col = r % npcol;
+      const int rows_for_rank = numroc_wrapper(static_cast<int>(n), nb, proc_row, 0, nprow);
+      const int cols_for_rank = numroc_wrapper(static_cast<int>(n), nb, proc_col, 0, npcol);
+      const int recv_count = rows_for_rank * cols_for_rank;
+      if (recv_count <= 0) {
+        continue;
+      }
+      std::vector<double> recvbuf(static_cast<std::size_t>(recv_count), 0.0);
+      MPI_Recv(recvbuf.data(), recv_count, MPI_DOUBLE, r, TAG_GATHER_MATRIX, comm, MPI_STATUS_IGNORE);
+      unpack_rank_local_matrix_to_root(recvbuf, chol, n, nb, proc_row, proc_col, nprow, npcol, std::max(1, rows_for_rank));
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+      for (std::size_t j = i + 1; j < n; ++j) {
+        chol[i * n + j] = 0.0;
+      }
+    }
+  } else {
+    const int send_count = local_rows * local_cols;
+    if (send_count > 0) {
+      MPI_Send(local_a.data(), send_count, MPI_DOUBLE, 0, TAG_GATHER_MATRIX, comm);
+    }
+  }
+  return chol;
+}
+
 NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<double>& full_matrix_root, const std::vector<double>& rhs_root, int block_size, MPI_Comm comm) {
   NativeResult result;
   result.backend = "scalapack";
   result.implemented = true;
-  result.message = "Distributed ScaLAPACK Cholesky factorization and solve with root-side reconstruction of outputs.";
+  result.message = "Distributed ScaLAPACK Cholesky factorization and solve with direct block-cyclic distribution and local-to-root reconstruction of outputs.";
 
   const int n_int = static_cast<int>(n);
   const int nb = std::max(1, block_size);
@@ -395,9 +696,9 @@ NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<
   const int rsrc = 0;
   const int csrc = 0;
   const int nrhs = 1;
-  const int local_rows = numroc_(&n_int, &nb, &myrow, &rsrc, &grid_rows);
-  const int local_cols = numroc_(&n_int, &nb, &mycol, &csrc, &grid_cols);
-  const int local_rhs_cols = numroc_(&nrhs, &nb, &mycol, &csrc, &grid_cols);
+  const int local_rows = numroc_wrapper(n_int, nb, myrow, rsrc, grid_rows);
+  const int local_cols = numroc_wrapper(n_int, nb, mycol, csrc, grid_cols);
+  const int local_rhs_cols = numroc_wrapper(nrhs, nb, mycol, csrc, grid_cols);
   const int lld_a = std::max(1, local_rows);
   const int lld_b = std::max(1, local_rows);
 
@@ -417,35 +718,11 @@ NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<
     return result;
   }
 
-  std::vector<double> full_matrix;
-  std::vector<double> rhs;
-  if (rank == 0) {
-    full_matrix = full_matrix_root;
-    rhs = rhs_root;
-  } else {
-    full_matrix.assign(n * n, 0.0);
-    rhs.assign(n, 0.0);
-  }
-  MPI_Bcast(full_matrix.data(), static_cast<int>(n * n), MPI_DOUBLE, 0, comm);
-  MPI_Bcast(rhs.data(), static_cast<int>(n), MPI_DOUBLE, 0, comm);
-
-  for (int gi = 0; gi < n_int; ++gi) {
-    for (int gj = 0; gj < n_int; ++gj) {
-      if (block_owner(gi, nb, grid_rows) == myrow && block_owner(gj, nb, grid_cols) == mycol) {
-        const int li = local_index(gi, nb, grid_rows);
-        const int lj = local_index(gj, nb, grid_cols);
-        local_a[static_cast<std::size_t>(li) + static_cast<std::size_t>(lj) * lld_a] = full_matrix[static_cast<std::size_t>(gi) * n + gj];
-      }
-    }
-    if (block_owner(gi, nb, grid_rows) == myrow && block_owner(0, nb, grid_cols) == mycol) {
-      const int li = local_index(gi, nb, grid_rows);
-      const int lj = local_index(0, nb, grid_cols);
-      local_b[static_cast<std::size_t>(li) + static_cast<std::size_t>(lj) * lld_b] = rhs[gi];
-    }
-  }
-
-  MPI_Barrier(comm);
   const auto total_start = std::chrono::steady_clock::now();
+  distribute_matrix_block_cyclic(full_matrix_root, n, nb, rank, grid_rows, grid_cols, myrow, mycol, lld_a, local_a, comm);
+  distribute_rhs_block_cyclic(rhs_root, n, nb, rank, grid_rows, grid_cols, myrow, mycol, local_rows, local_b, comm);
+  MPI_Barrier(comm);
+
   const auto factor_start = std::chrono::steady_clock::now();
   const char uplo = 'L';
   const int ia = 1;
@@ -460,35 +737,13 @@ NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<
     const int jb = 1;
     pdpotrs_(&uplo, &n_int, &nrhs, local_a.data(), &ia, &ja, desc_a, local_b.data(), &ib, &jb, desc_b, &result.info_potrs);
   }
+  result.logdet = distributed_logdet_from_local_cholesky(local_a, n, nb, myrow, mycol, grid_rows, grid_cols, lld_a, comm);
   MPI_Barrier(comm);
   const auto solve_end = std::chrono::steady_clock::now();
 
   const auto gather_start = std::chrono::steady_clock::now();
-  std::vector<double> partial_chol(n * n, 0.0);
-  std::vector<double> partial_alpha(n, 0.0);
-  for (int gi = 0; gi < n_int; ++gi) {
-    for (int gj = 0; gj < n_int; ++gj) {
-      if (block_owner(gi, nb, grid_rows) == myrow && block_owner(gj, nb, grid_cols) == mycol) {
-        const int li = local_index(gi, nb, grid_rows);
-        const int lj = local_index(gj, nb, grid_cols);
-        partial_chol[static_cast<std::size_t>(gi) * n + gj] = local_a[static_cast<std::size_t>(li) + static_cast<std::size_t>(lj) * lld_a];
-      }
-    }
-    if (result.info_potrf == 0 && block_owner(gi, nb, grid_rows) == myrow && block_owner(0, nb, grid_cols) == mycol) {
-      const int li = local_index(gi, nb, grid_rows);
-      const int lj = local_index(0, nb, grid_cols);
-      partial_alpha[gi] = local_b[static_cast<std::size_t>(li) + static_cast<std::size_t>(lj) * lld_b];
-    }
-  }
-
-  std::vector<double> gathered_chol;
-  std::vector<double> gathered_alpha;
-  if (rank == 0) {
-    gathered_chol.assign(n * n, 0.0);
-    gathered_alpha.assign(n, 0.0);
-  }
-  MPI_Reduce(partial_chol.data(), rank == 0 ? gathered_chol.data() : nullptr, static_cast<int>(n * n), MPI_DOUBLE, MPI_SUM, 0, comm);
-  MPI_Reduce(partial_alpha.data(), rank == 0 ? gathered_alpha.data() : nullptr, static_cast<int>(n), MPI_DOUBLE, MPI_SUM, 0, comm);
+  gather_alpha_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, local_rows, local_b, comm).swap(result.alpha);
+  gather_local_matrix_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, lld_a, local_rows, local_cols, local_a, comm).swap(result.chol);
   MPI_Barrier(comm);
   const auto gather_end = std::chrono::steady_clock::now();
   const auto total_end = std::chrono::steady_clock::now();
@@ -496,16 +751,6 @@ NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<
   Cblacs_gridexit(ictxt);
 
   if (rank == 0) {
-    for (std::size_t i = 0; i < n; ++i) {
-      for (std::size_t j = i + 1; j < n; ++j) {
-        gathered_chol[i * n + j] = 0.0;
-      }
-    }
-    result.alpha = std::move(gathered_alpha);
-    result.chol = std::move(gathered_chol);
-    if (result.info_potrf == 0 && result.info_potrs == 0) {
-      result.logdet = logdet_from_cholesky_lower(result.chol, n);
-    }
     result.factor_seconds = std::chrono::duration<double>(factor_end - factor_start).count();
     result.solve_seconds = std::chrono::duration<double>(solve_end - solve_start).count();
     result.gather_seconds = std::chrono::duration<double>(gather_end - gather_start).count();
