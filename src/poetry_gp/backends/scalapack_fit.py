@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,6 +48,41 @@ class ScaLAPACKPreparedRun:
 
 def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2))
+
+
+def _check_problem_size_and_warn(n: int, nprocs: int) -> None:
+    """
+    Warn users when ScaLAPACK overhead dominates computation.
+
+    Current overhead (~2-3s after BLAS optimization):
+    - Subprocess launch + MPI init: ~0.3-0.5s
+    - Kernel assembly (BLAS-optimized): ~0.1-0.5s
+    - Scatter/gather: ~1.0-1.5s
+    - File I/O: ~0.5s
+
+    Python's O(n³) Cholesky becomes competitive around n=5000-10000.
+    After Milestone 1B (distributed assembly), crossover drops to n=1000-2000.
+    """
+    # Warn for very small problems that will definitely be slower
+    if n < 1000:
+        warnings.warn(
+            f"ScaLAPACK backend for n={n} is likely slower than Python due to overhead "
+            f"(subprocess launch, MPI init, scatter/gather ~2-3s). "
+            f"Consider using fit_backend='python' for n < 1000. "
+            f"See docs/NATIVE_HPC_ROADMAP.md for details.",
+            UserWarning,
+            stacklevel=3,
+        )
+    # Inform for medium problems where performance may be mixed
+    elif n < 5000 and nprocs > 1:
+        warnings.warn(
+            f"ScaLAPACK backend for n={n} with {nprocs} processes may not be faster than Python. "
+            f"Current overhead is ~2-3s. Crossover point is around n=5000-10000. "
+            f"For best performance on small problems, use fit_backend='python'. "
+            f"See docs/BENCHMARKING_GUIDE.md for performance analysis.",
+            UserWarning,
+            stacklevel=3,
+        )
 
 
 def _build_launcher_command(launcher: str, nprocs: int, executable: str) -> list[str]:
@@ -350,6 +386,10 @@ def fit_exact_gp_scalapack_from_features(
     workdir: Path | None = None,
     verbose: bool = False,
 ) -> ScaLAPACKFitResult:
+    # Warn if problem size is too small for ScaLAPACK to be beneficial
+    n = x_rated.shape[0]
+    _check_problem_size_and_warn(n, nprocs)
+
     prepared = prepare_scalapack_feature_fit_workdir(
         x_rated,
         y,
