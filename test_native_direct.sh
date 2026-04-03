@@ -34,7 +34,7 @@ y.tofile("/tmp/test_native/targets.bin")
 meta = {
     "n": n,
     "d": d,
-    "input_kind": 1,  # features
+    "input_kind": "features",  # Must be string "features", not integer!
     "length_scale": 1.0,
     "variance": 1.0,
     "noise": 1e-3
