@@ -786,38 +786,7 @@ std::vector<double> build_local_rbf_blocks_from_features(
     const int local_col_start = (block_j / npcol) * nb;
     const int local_row_start = (block_i / nprow) * nb;
 
-    // Use BLAS DGEMM to compute Gram matrix block: G = X_rows @ X_cols^T
-    // This is MUCH faster than computing dot products one at a time
-    //
-    // IMPORTANT: Our features are row-major, but DGEMM expects column-major.
-    // To compute C = A @ B^T (row-major), we compute C^T = B @ A^T and swap arguments:
-    // This gives us gram_block in column-major layout.
-    std::vector<double> gram_block(block_rows * block_cols, 0.0);
-
-    {
-      const char transa = 'N';  // X_cols not transposed (in col-major view)
-      const char transb = 'T';  // X_rows transposed (in col-major view)
-      const double alpha = 1.0;
-      const double beta = 0.0;
-
-      // For row-major inputs, swap order: compute B @ A^T instead of A @ B^T
-      const int m = block_cols;  // Swapped
-      const int n_cols = block_rows;  // Swapped
-      const int k = d;
-      const int lda = d;  // Leading dim of X_cols (row-major stride)
-      const int ldb = d;  // Leading dim of X_rows (row-major stride)
-      const int ldc = block_cols;  // Leading dim of output (column-major)
-
-      const double* x_rows = x.data() + global_i_start * static_cast<std::size_t>(d);
-      const double* x_cols = x.data() + global_j_start * static_cast<std::size_t>(d);
-
-      // Compute: gram_block (col-major) = X_cols @ X_rows^T
-      dgemm_(&transa, &transb, &m, &n_cols, &k, &alpha, x_cols, &lda, x_rows, &ldb, &beta, gram_block.data(), &ldc);
-    }
-
-    // Apply RBF transformation to Gram matrix block
-    // Note: gram_block is column-major (block_cols × block_rows) from DGEMM
-    // gram_block[i * block_cols + j] = dot(X_rows[i], X_cols[j])
+    // Compute kernel values for this block using dot products
     for (int local_i = 0; local_i < block_rows; ++local_i) {
       const int global_i = global_i_start + local_i;
       const int local_row = local_row_start + local_i;
@@ -826,8 +795,12 @@ std::vector<double> build_local_rbf_blocks_from_features(
         const int global_j = global_j_start + local_j;
         const int local_col = local_col_start + local_j;
 
-        // Get dot product from precomputed Gram matrix (column-major layout)
-        const double dot = gram_block[local_i * block_cols + local_j];
+        // Compute dot product manually for now (DGEMM optimization TODO)
+        double dot = 0.0;
+        for (int k = 0; k < d; ++k) {
+          dot += x[global_i * static_cast<std::size_t>(d) + k] *
+                 x[global_j * static_cast<std::size_t>(d) + k];
+        }
 
         // RBF kernel: exp(-0.5 * ||x_i - x_j||^2 / length_scale^2)
         double d2 = norms[global_i] + norms[global_j] - 2.0 * dot;
