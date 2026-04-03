@@ -39,17 +39,21 @@ def load_and_prepare_data(csv_file: Path) -> pd.DataFrame:
 
     # Handle different possible column names and missing values
     # Check if we have fit_backend or backend column
-    if "fit_backend" not in df.columns and "backend" in df.columns:
-        # Infer fit_backend from other columns or use backend
-        if "native_backend" in df.columns:
-            df["fit_backend"] = df.apply(
-                lambda row: "python" if pd.isna(row.get("native_backend")) or row.get("native_backend") == ""
-                else "native_reference",
-                axis=1
-            )
+    if "fit_backend" not in df.columns:
+        if "backend" in df.columns:
+            # Try to infer from backend and nprocs
+            if "nprocs" in df.columns:
+                df["fit_backend"] = df.apply(
+                    lambda row: "native_reference" if pd.notna(row.get("nprocs")) and row.get("nprocs") != "" and row.get("nprocs") != 1
+                    else "python",
+                    axis=1
+                )
+            else:
+                # Can't determine, assume Python
+                df["fit_backend"] = "python"
         else:
-            # Assume Python if we can't tell
-            df["fit_backend"] = "python"
+            # No backend info at all
+            df["fit_backend"] = "unknown"
 
     # Fill missing native_backend with empty string
     if "native_backend" not in df.columns:
@@ -259,22 +263,50 @@ def plot_block_size_impact(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: in
 
 def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: int) -> None:
     """Plot: Detailed time breakdown (fit, score, select)."""
+    # Check if we have the required columns for detailed breakdown
+    required_cols = ["fit_seconds", "score_seconds"]
+    if not all(col in df.columns for col in required_cols):
+        print(f"Skipping detailed breakdown - missing required columns")
+        return
+
+    # Optional columns (not all CSVs have these)
+    has_select = "select_seconds" in df.columns
+    has_optimize = "optimize_seconds" in df.columns
+
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
+    # Build aggregation dict based on available columns
+    agg_dict = {"fit_seconds": "mean", "score_seconds": "mean"}
+    if has_select:
+        agg_dict["select_seconds"] = "mean"
+    if has_optimize:
+        agg_dict["optimize_seconds"] = "mean"
+
     # Python breakdown
-    python_data = df[df["fit_backend"] == "python"].groupby("m_rated").agg({
-        "fit_seconds": "mean",
-        "score_seconds": "mean",
-        "select_seconds": "mean",
-    }).reset_index()
+    python_df = df[df["fit_backend"] == "python"]
+    if python_df.empty:
+        print("No Python data for breakdown plot")
+        plt.close()
+        return
+
+    python_data = python_df.groupby("m_rated").agg(agg_dict).reset_index()
 
     if not python_data.empty:
         ax = axes[0]
         m_rated = python_data["m_rated"].values
+
+        # Stack bars based on available columns
+        bottom = np.zeros(len(m_rated))
         ax.bar(range(len(m_rated)), python_data["fit_seconds"], label="Fit", alpha=0.8)
-        ax.bar(range(len(m_rated)), python_data["score_seconds"], bottom=python_data["fit_seconds"], label="Score", alpha=0.8)
-        ax.bar(range(len(m_rated)), python_data["select_seconds"],
-               bottom=python_data["fit_seconds"] + python_data["score_seconds"], label="Select", alpha=0.8)
+        bottom += python_data["fit_seconds"].values
+
+        if "score_seconds" in python_data.columns:
+            ax.bar(range(len(m_rated)), python_data["score_seconds"], bottom=bottom, label="Score", alpha=0.8)
+            bottom += python_data["score_seconds"].values
+
+        if has_select and "select_seconds" in python_data.columns:
+            ax.bar(range(len(m_rated)), python_data["select_seconds"], bottom=bottom, label="Select", alpha=0.8)
+
         ax.set_xticks(range(len(m_rated)))
         ax.set_xticklabels([int(x) for x in m_rated])
         ax.set_xlabel("Problem Size (m_rated)", fontsize=12)
@@ -284,26 +316,36 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
         ax.grid(True, alpha=0.3, axis="y")
 
     # ScaLAPACK breakdown
-    scalapack_data = df[df["fit_backend"] == "native_reference"].groupby("m_rated").agg({
-        "fit_seconds": "mean",
-        "score_seconds": "mean",
-        "select_seconds": "mean",
-    }).reset_index()
+    scalapack_df = df[df["fit_backend"] == "native_reference"]
+    if scalapack_df.empty:
+        # Hide second subplot if no data
+        axes[1].set_visible(False)
+    else:
+        scalapack_data = scalapack_df.groupby("m_rated").agg(agg_dict).reset_index()
 
-    if not scalapack_data.empty:
-        ax = axes[1]
-        m_rated = scalapack_data["m_rated"].values
-        ax.bar(range(len(m_rated)), scalapack_data["fit_seconds"], label="Fit", alpha=0.8)
-        ax.bar(range(len(m_rated)), scalapack_data["score_seconds"], bottom=scalapack_data["fit_seconds"], label="Score", alpha=0.8)
-        ax.bar(range(len(m_rated)), scalapack_data["select_seconds"],
-               bottom=scalapack_data["fit_seconds"] + scalapack_data["score_seconds"], label="Select", alpha=0.8)
-        ax.set_xticks(range(len(m_rated)))
-        ax.set_xticklabels([int(x) for x in m_rated])
-        ax.set_xlabel("Problem Size (m_rated)", fontsize=12)
-        ax.set_ylabel("Time (seconds)", fontsize=12)
-        ax.set_title("ScaLAPACK Time Breakdown", fontsize=14, fontweight="bold")
-        ax.legend()
-        ax.grid(True, alpha=0.3, axis="y")
+        if not scalapack_data.empty:
+            ax = axes[1]
+            m_rated = scalapack_data["m_rated"].values
+
+            # Stack bars based on available columns
+            bottom = np.zeros(len(m_rated))
+            ax.bar(range(len(m_rated)), scalapack_data["fit_seconds"], label="Fit", alpha=0.8)
+            bottom += scalapack_data["fit_seconds"].values
+
+            if "score_seconds" in scalapack_data.columns:
+                ax.bar(range(len(m_rated)), scalapack_data["score_seconds"], bottom=bottom, label="Score", alpha=0.8)
+                bottom += scalapack_data["score_seconds"].values
+
+            if has_select and "select_seconds" in scalapack_data.columns:
+                ax.bar(range(len(m_rated)), scalapack_data["select_seconds"], bottom=bottom, label="Select", alpha=0.8)
+
+            ax.set_xticks(range(len(m_rated)))
+            ax.set_xticklabels([int(x) for x in m_rated])
+            ax.set_xlabel("Problem Size (m_rated)", fontsize=12)
+            ax.set_ylabel("Time (seconds)", fontsize=12)
+            ax.set_title("ScaLAPACK Time Breakdown", fontsize=14, fontweight="bold")
+            ax.legend()
+            ax.grid(True, alpha=0.3, axis="y")
 
     plt.tight_layout()
     _save_figure(fig, output_dir / "time_breakdown", fmt, dpi)
