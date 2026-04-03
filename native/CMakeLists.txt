@@ -32,7 +32,7 @@ if(POETRY_ENABLE_SCALAPACK)
   endif()
 endif()
 
-add_executable(scalapack_gp_fit scalapack_gp_fit.cpp)
+add_executable(scalapack_gp_fit scalapack_gp_fit_entry.cpp)
 target_link_libraries(scalapack_gp_fit PRIVATE MPI::MPI_CXX)
 
 # Intentionally do not add a second generic BLAS/LAPACK stack here.
