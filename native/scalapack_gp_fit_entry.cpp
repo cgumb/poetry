@@ -260,6 +260,13 @@ int main(int argc, char** argv) {
         const std::vector<double> x_rated = read_binary_feature_matrix_entry(args.matrix_bin, meta.n, meta.d);
         full_matrix = build_dense_rbf_matrix_from_features_entry(
             x_rated, meta.n, meta.d, meta.length_scale, meta.variance, meta.noise);
+
+        // Debug: check matrix properties
+        std::cerr << "[DEBUG] Matrix built. Checking first few diagonal elements:" << std::endl;
+        for (std::size_t i = 0; i < std::min(std::size_t(5), meta.n); ++i) {
+          std::cerr << "  K[" << i << "," << i << "] = " << full_matrix[i * meta.n + i] << std::endl;
+        }
+        std::cerr << "[DEBUG] First off-diagonal: K[0,1] = " << full_matrix[1] << std::endl;
       } else {
         full_matrix = read_binary_matrix(args.matrix_bin, meta.n);
       }
@@ -293,9 +300,11 @@ int main(int argc, char** argv) {
                 << " requested=" << result.requested_backend
                 << " n=" << meta.n
                 << " ranks=" << size << "\n";
+      std::cerr << "[DEBUG] info_potrf=" << result.info_potrf << " info_potrs=" << result.info_potrs << std::endl;
       if (!result.implemented) {
         exit_code = 3;
       } else if (result.info_potrf != 0 || result.info_potrs != 0) {
+        std::cerr << "[ERROR] Factorization or solve failed!" << std::endl;
         exit_code = 2;
       }
     }
