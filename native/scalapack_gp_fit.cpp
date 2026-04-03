@@ -674,6 +674,148 @@ std::vector<double> gather_local_matrix_to_root(
   return chol;
 }
 
+#ifdef HAVE_SCALAPACK
+// Milestone 1B: Distributed kernel assembly functions
+
+void broadcast_features(std::vector<double>& x_rated, std::size_t n, int d, int rank, MPI_Comm comm) {
+  // Ensure all ranks have the feature matrix
+  // Much smaller than broadcasting full kernel (n*d vs n*n)
+  const std::size_t total_size = n * static_cast<std::size_t>(d);
+
+  if (rank != 0) {
+    x_rated.resize(total_size);
+  }
+
+  // Broadcast in chunks if needed (MPI has 2GB limit)
+  const std::size_t chunk_size = 100000000;  // ~100M doubles = 800MB per chunk
+  std::size_t offset = 0;
+
+  while (offset < total_size) {
+    const std::size_t remaining = total_size - offset;
+    const int count = static_cast<int>(std::min(remaining, chunk_size));
+    MPI_Bcast(x_rated.data() + offset, count, MPI_DOUBLE, 0, comm);
+    offset += count;
+  }
+}
+
+// Determine which global (i,j) blocks this rank owns in block-cyclic distribution
+std::vector<std::pair<int, int>> get_owned_blocks(
+    int n, int nb, int myrow, int mycol, int nprow, int npcol) {
+
+  std::vector<std::pair<int, int>> blocks;
+
+  // Number of block rows/cols in the matrix
+  const int num_block_rows = (n + nb - 1) / nb;
+  const int num_block_cols = (n + nb - 1) / nb;
+
+  // Iterate over all block positions
+  for (int block_i = 0; block_i < num_block_rows; ++block_i) {
+    for (int block_j = 0; block_j < num_block_cols; ++block_j) {
+      // Block-cyclic: rank (r,c) owns blocks where (block_i % nprow == r) and (block_j % npcol == c)
+      if ((block_i % nprow == myrow) && (block_j % npcol == mycol)) {
+        blocks.push_back({block_i, block_j});
+      }
+    }
+  }
+
+  return blocks;
+}
+
+// Build local blocks of RBF kernel matrix according to ScaLAPACK layout
+std::vector<double> build_local_rbf_blocks_from_features(
+    const std::vector<double>& x,
+    std::size_t n,
+    int d,
+    double length_scale,
+    double variance,
+    double noise,
+    int nb,
+    int myrow,
+    int mycol,
+    int nprow,
+    int npcol,
+    int lld,
+    int local_cols) {
+
+  std::cerr << "[DEBUG] Rank (" << myrow << "," << mycol << ") building local blocks: "
+            << "n=" << n << " nb=" << nb << " lld=" << lld << " local_cols=" << local_cols << std::endl;
+
+  // Allocate local storage
+  std::vector<double> local_matrix(static_cast<std::size_t>(lld) * std::max(1, local_cols), 0.0);
+
+  // Precompute norms
+  std::vector<double> norms(n, 0.0);
+  for (std::size_t i = 0; i < n; ++i) {
+    double sum = 0.0;
+    for (int k = 0; k < d; ++k) {
+      const double val = x[i * static_cast<std::size_t>(d) + static_cast<std::size_t>(k)];
+      sum += val * val;
+    }
+    norms[i] = sum;
+  }
+
+  // Get blocks owned by this rank
+  auto owned_blocks = get_owned_blocks(static_cast<int>(n), nb, myrow, mycol, nprow, npcol);
+
+  std::cerr << "[DEBUG] Rank (" << myrow << "," << mycol << ") owns " << owned_blocks.size() << " blocks" << std::endl;
+
+  const double inv_two_ell_sq = -0.5 / (length_scale * length_scale);
+
+  // Process each owned block
+  for (const auto& block_pair : owned_blocks) {
+    const int block_i = block_pair.first;
+    const int block_j = block_pair.second;
+
+    // Global indices for this block
+    const int global_i_start = block_i * nb;
+    const int global_j_start = block_j * nb;
+    const int block_rows = std::min(nb, static_cast<int>(n) - global_i_start);
+    const int block_cols = std::min(nb, static_cast<int>(n) - global_j_start);
+
+    // Local column index for this block
+    const int local_col_start = (block_j / npcol) * nb;
+
+    // Compute kernel values for this block
+    for (int local_i = 0; local_i < block_rows; ++local_i) {
+      const int global_i = global_i_start + local_i;
+
+      // Local row index (accounting for block-cyclic distribution)
+      const int local_row_start = (block_i / nprow) * nb;
+      const int local_row = local_row_start + local_i;
+
+      for (int local_j = 0; local_j < block_cols; ++local_j) {
+        const int global_j = global_j_start + local_j;
+        const int local_col = local_col_start + local_j;
+
+        // Compute dot product
+        double dot = 0.0;
+        for (int k = 0; k < d; ++k) {
+          dot += x[global_i * static_cast<std::size_t>(d) + k] *
+                 x[global_j * static_cast<std::size_t>(d) + k];
+        }
+
+        // RBF kernel: exp(-0.5 * ||x_i - x_j||^2 / length_scale^2)
+        double d2 = norms[global_i] + norms[global_j] - 2.0 * dot;
+        if (d2 < 0.0) d2 = 0.0;
+
+        double value = variance * std::exp(inv_two_ell_sq * d2);
+
+        // Add noise to diagonal
+        if (global_i == global_j) {
+          value += noise * noise;
+        }
+
+        // Store in local matrix
+        local_matrix[local_row + static_cast<std::size_t>(local_col) * lld] = value;
+      }
+    }
+  }
+
+  std::cerr << "[DEBUG] Rank (" << myrow << "," << mycol << ") completed local kernel assembly" << std::endl;
+  return local_matrix;
+}
+#endif
+
 NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<double>& full_matrix_root, const std::vector<double>& rhs_root, int block_size, MPI_Comm comm) {
   NativeResult result;
   result.backend = "scalapack";
@@ -756,6 +898,141 @@ NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<
     result.gather_seconds = std::chrono::duration<double>(gather_end - gather_start).count();
     result.total_seconds = std::chrono::duration<double>(total_end - total_start).count();
   }
+  return result;
+}
+
+// Milestone 1B: Distributed kernel assembly version
+NativeResult run_scalapack_distributed(
+    std::size_t n,
+    int rank,
+    int size,
+    const std::vector<double>& x_rated_root,  // Features on root (n×d)
+    const std::vector<double>& rhs_root,
+    int d,
+    double length_scale,
+    double variance,
+    double noise,
+    int block_size,
+    MPI_Comm comm) {
+
+  NativeResult result;
+  result.backend = "scalapack_distributed";
+  result.implemented = true;
+  result.message = "Distributed ScaLAPACK with parallel kernel assembly from features (Milestone 1B).";
+
+  const int n_int = static_cast<int>(n);
+  const int nb = std::max(1, block_size);
+  const int nprow = choose_nprow(size);
+  const int npcol = size / nprow;
+  int ictxt = 0;
+  Cblacs_get(-1, 0, &ictxt);
+  Cblacs_gridinit(&ictxt, "R", nprow, npcol);
+  int myrow = -1;
+  int mycol = -1;
+  int grid_rows = 0;
+  int grid_cols = 0;
+  Cblacs_gridinfo(ictxt, &grid_rows, &grid_cols, &myrow, &mycol);
+
+  const int rsrc = 0;
+  const int csrc = 0;
+  const int nrhs = 1;
+  const int local_rows = numroc_wrapper(n_int, nb, myrow, rsrc, grid_rows);
+  const int local_cols = numroc_wrapper(n_int, nb, mycol, csrc, grid_cols);
+  const int local_rhs_cols = numroc_wrapper(nrhs, nb, mycol, csrc, grid_cols);
+  const int lld_a = std::max(1, local_rows);
+  const int lld_b = std::max(1, local_rows);
+
+  std::vector<double> local_b(static_cast<std::size_t>(lld_b) * std::max(1, local_rhs_cols), 0.0);
+
+  int desc_a[9];
+  int desc_b[9];
+  int info_desc_a = 0;
+  int info_desc_b = 0;
+  descinit_(desc_a, &n_int, &n_int, &nb, &nb, &rsrc, &csrc, &ictxt, &lld_a, &info_desc_a);
+  descinit_(desc_b, &n_int, &nrhs, &nb, &nb, &rsrc, &csrc, &ictxt, &lld_b, &info_desc_b);
+  if (info_desc_a != 0 || info_desc_b != 0) {
+    result.implemented = false;
+    result.message = "ScaLAPACK descriptor initialization failed.";
+    Cblacs_gridexit(ictxt);
+    return result;
+  }
+
+  const auto total_start = std::chrono::steady_clock::now();
+
+  // Step 1: Broadcast features to all ranks (much smaller than full matrix!)
+  std::vector<double> x_rated = x_rated_root;  // Copy on root, empty on others
+  const auto broadcast_start = std::chrono::steady_clock::now();
+  broadcast_features(x_rated, n, d, rank, comm);
+  const auto broadcast_end = std::chrono::steady_clock::now();
+
+  if (rank == 0) {
+    std::cerr << "[Milestone 1B] Broadcast " << (n*d*8.0/1e6) << " MB features in "
+              << std::chrono::duration<double>(broadcast_end - broadcast_start).count()
+              << " seconds" << std::endl;
+  }
+
+  // Step 2: Each rank builds its local blocks (PARALLEL!)
+  const auto assembly_start = std::chrono::steady_clock::now();
+  std::vector<double> local_a = build_local_rbf_blocks_from_features(
+      x_rated, n, d, length_scale, variance, noise,
+      nb, myrow, mycol, nprow, npcol, lld_a, local_cols);
+  const auto assembly_end = std::chrono::steady_clock::now();
+
+  if (rank == 0) {
+    std::cerr << "[Milestone 1B] Parallel kernel assembly in "
+              << std::chrono::duration<double>(assembly_end - assembly_start).count()
+              << " seconds" << std::endl;
+  }
+
+  // Step 3: Distribute RHS (still needed, but much smaller than matrix)
+  distribute_rhs_block_cyclic(rhs_root, n, nb, rank, grid_rows, grid_cols, myrow, mycol, local_rows, local_b, comm);
+  MPI_Barrier(comm);
+
+  // Step 4: Cholesky factorization (same as before)
+  const auto factor_start = std::chrono::steady_clock::now();
+  const char uplo = 'L';
+  const int ia = 1;
+  const int ja = 1;
+  pdpotrf_(&uplo, &n_int, local_a.data(), &ia, &ja, desc_a, &result.info_potrf);
+  MPI_Barrier(comm);
+  const auto factor_end = std::chrono::steady_clock::now();
+
+  // Step 5: Solve (same as before)
+  const auto solve_start = std::chrono::steady_clock::now();
+  if (result.info_potrf == 0) {
+    const int ib = 1;
+    const int jb = 1;
+    pdpotrs_(&uplo, &n_int, &nrhs, local_a.data(), &ia, &ja, desc_a, local_b.data(), &ib, &jb, desc_b, &result.info_potrs);
+  }
+  result.logdet = distributed_logdet_from_local_cholesky(local_a, n, nb, myrow, mycol, grid_rows, grid_cols, lld_a, comm);
+  MPI_Barrier(comm);
+  const auto solve_end = std::chrono::steady_clock::now();
+
+  // Step 6: Gather results (same as before)
+  const auto gather_start = std::chrono::steady_clock::now();
+  gather_alpha_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, local_rows, local_b, comm).swap(result.alpha);
+  gather_local_matrix_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, lld_a, local_rows, local_cols, local_a, comm).swap(result.chol);
+  MPI_Barrier(comm);
+  const auto gather_end = std::chrono::steady_clock::now();
+  const auto total_end = std::chrono::steady_clock::now();
+
+  Cblacs_gridexit(ictxt);
+
+  if (rank == 0) {
+    result.factor_seconds = std::chrono::duration<double>(factor_end - factor_start).count();
+    result.solve_seconds = std::chrono::duration<double>(solve_end - solve_start).count();
+    result.gather_seconds = std::chrono::duration<double>(gather_end - gather_start).count();
+    result.total_seconds = std::chrono::duration<double>(total_end - total_start).count();
+
+    std::cerr << "[Milestone 1B] Timings:" << std::endl;
+    std::cerr << "  Broadcast: " << std::chrono::duration<double>(broadcast_end - broadcast_start).count() << "s" << std::endl;
+    std::cerr << "  Assembly:  " << std::chrono::duration<double>(assembly_end - assembly_start).count() << "s" << std::endl;
+    std::cerr << "  Factor:    " << result.factor_seconds << "s" << std::endl;
+    std::cerr << "  Solve:     " << result.solve_seconds << "s" << std::endl;
+    std::cerr << "  Gather:    " << result.gather_seconds << "s" << std::endl;
+    std::cerr << "  Total:     " << result.total_seconds << "s" << std::endl;
+  }
+
   return result;
 }
 #endif
