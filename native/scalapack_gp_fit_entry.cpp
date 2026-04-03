@@ -6,6 +6,16 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <cmath>
+
+// BLAS dgemm for optimized kernel assembly
+extern "C" {
+  void dgemm_(const char* transa, const char* transb,
+              const int* m, const int* n, const int* k,
+              const double* alpha, const double* a, const int* lda,
+              const double* b, const int* ldb,
+              const double* beta, double* c, const int* ldc);
+}
 
 namespace {
 
@@ -136,6 +146,7 @@ std::vector<double> build_dense_rbf_matrix_from_features_entry(
     double length_scale,
     double variance,
     double noise) {
+  // Step 1: Compute row norms ||x[i]||^2
   std::vector<double> norms(n, 0.0);
   for (std::size_t i = 0; i < n; ++i) {
     double sum = 0.0;
@@ -146,22 +157,44 @@ std::vector<double> build_dense_rbf_matrix_from_features_entry(
     norms[i] = sum;
   }
 
+  // Step 2: Compute Gram matrix G = X @ X^T using BLAS DGEMM
+  // This replaces the O(n^2*d) triple loop with optimized BLAS
+  std::vector<double> gram(n * n, 0.0);
+  const int n_int = static_cast<int>(n);
+  const char transa = 'N';  // X is not transposed
+  const char transb = 'T';  // X^T is transposed
+  const double alpha = 1.0;
+  const double beta = 0.0;
+
+  // C = alpha * A @ B^T + beta * C
+  // gram(n x n) = 1.0 * x(n x d) @ x^T(d x n) + 0.0 * gram
+  dgemm_(&transa, &transb,
+         &n_int, &n_int, &d,           // M, N, K dimensions
+         &alpha, x.data(), &n_int,     // alpha, A, LDA
+         x.data(), &n_int,             // B (same as A for Gram matrix), LDB
+         &beta, gram.data(), &n_int);  // beta, C, LDC
+
+  // Step 3: Apply RBF kernel transformation
+  // K[i,j] = variance * exp(-0.5 * ||x[i] - x[j]||^2 / length_scale^2)
+  // Using: ||x[i] - x[j]||^2 = ||x[i]||^2 + ||x[j]||^2 - 2 * <x[i], x[j]>
   std::vector<double> matrix(n * n, 0.0);
   const double inv_two_ell_sq = -0.5 / (length_scale * length_scale);
+
   for (std::size_t i = 0; i < n; ++i) {
     for (std::size_t j = 0; j < n; ++j) {
-      double dot = 0.0;
-      for (int k = 0; k < d; ++k) {
-        dot += x[i * static_cast<std::size_t>(d) + static_cast<std::size_t>(k)] * x[j * static_cast<std::size_t>(d) + static_cast<std::size_t>(k)];
-      }
-      double d2 = norms[i] + norms[j] - 2.0 * dot;
+      double d2 = norms[i] + norms[j] - 2.0 * gram[i * n + j];
       if (d2 < 0.0) {
-        d2 = 0.0;
+        d2 = 0.0;  // Numerical stability for near-identical points
       }
       matrix[i * n + j] = variance * std::exp(inv_two_ell_sq * d2);
     }
+  }
+
+  // Step 4: Add noise to diagonal
+  for (std::size_t i = 0; i < n; ++i) {
     matrix[i * n + i] += noise * noise;
   }
+
   return matrix;
 }
 
