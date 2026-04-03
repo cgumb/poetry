@@ -956,14 +956,26 @@ NativeResult run_scalapack_distributed(
   const int nb = std::max(1, block_size);
   const int nprow = choose_nprow(size);
   const int npcol = size / nprow;
+
+  std::cerr << "[DEBUG GRID] size=" << size << " nprow=" << nprow << " npcol=" << npcol << std::endl;
+
   int ictxt = 0;
+  std::cerr << "[DEBUG GRID] ictxt before Cblacs_get: " << ictxt << std::endl;
+
   Cblacs_get(-1, 0, &ictxt);
+  std::cerr << "[DEBUG GRID] ictxt after Cblacs_get: " << ictxt << std::endl;
+
   Cblacs_gridinit(&ictxt, "R", nprow, npcol);
+  std::cerr << "[DEBUG GRID] ictxt after Cblacs_gridinit: " << ictxt << std::endl;
+
   int myrow = -1;
   int mycol = -1;
   int grid_rows = 0;
   int grid_cols = 0;
   Cblacs_gridinfo(ictxt, &grid_rows, &grid_cols, &myrow, &mycol);
+
+  std::cerr << "[DEBUG GRID] After gridinfo: grid_rows=" << grid_rows << " grid_cols=" << grid_cols
+            << " myrow=" << myrow << " mycol=" << mycol << std::endl;
 
   const int rsrc = 0;
   const int csrc = 0;
@@ -980,8 +992,19 @@ NativeResult run_scalapack_distributed(
   int desc_b[9];
   int info_desc_a = 0;
   int info_desc_b = 0;
+
+  std::cerr << "[DEBUG DESC] Before descinit_: ictxt=" << ictxt << " n_int=" << n_int
+            << " nb=" << nb << " rsrc=" << rsrc << " csrc=" << csrc
+            << " lld_a=" << lld_a << " lld_b=" << lld_b << std::endl;
+
   descinit_(desc_a, &n_int, &n_int, &nb, &nb, &rsrc, &csrc, &ictxt, &lld_a, &info_desc_a);
   descinit_(desc_b, &n_int, &nrhs, &nb, &nb, &rsrc, &csrc, &ictxt, &lld_b, &info_desc_b);
+
+  std::cerr << "[DEBUG DESC] After descinit_: info_desc_a=" << info_desc_a << " info_desc_b=" << info_desc_b << std::endl;
+  std::cerr << "[DEBUG DESC] desc_a=[" << desc_a[0] << "," << desc_a[1] << "," << desc_a[2]
+            << "," << desc_a[3] << "," << desc_a[4] << "," << desc_a[5]
+            << "," << desc_a[6] << "," << desc_a[7] << "," << desc_a[8] << "]" << std::endl;
+
   if (info_desc_a != 0 || info_desc_b != 0) {
     result.implemented = false;
     result.message = "ScaLAPACK descriptor initialization failed.";
