@@ -27,12 +27,18 @@ export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
+# Open MPI on this cluster can inherit/believe a restrictive binding policy
+# under Slurm. Force a neutral binding policy for both the smoke test below
+# and the internal mpirun launches used by compare_fit_backends.py.
+export OMPI_MCA_hwloc_base_binding_policy=none
+export OMPI_MCA_rmaps_base_mapping_policy=slot
+
 cmake -S native -B native/build
 cmake --build native/build
 
 echo "JOB=$SLURM_JOB_ID STEP=${SLURM_STEP_ID:-unset} NTASKS=$SLURM_NTASKS STEP_TASKS=${SLURM_STEP_NUM_TASKS:-unset}"
 if [[ "$NATIVE_LAUNCHER" == "mpirun" ]]; then
-  mpirun -n "$(echo "$NPROCS_LIST" | awk '{print $NF}')" hostname
+  mpirun --bind-to none -n "$(echo "$NPROCS_LIST" | awk '{print $NF}')" hostname
 fi
 
 for m_rated in $M_RATED_LIST; do
