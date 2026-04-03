@@ -14,6 +14,7 @@
 
 #ifdef HAVE_SCALAPACK
 extern "C" {
+void Cblacs_pinfo(int* mypnum, int* nprocs);
 void Cblacs_get(int context, int request, int* value);
 void Cblacs_gridinit(int* context, const char* order, int nprow, int npcol);
 void Cblacs_gridinfo(int context, int* nprow, int* npcol, int* myrow, int* mycol);
