@@ -71,8 +71,8 @@ for m_rated in $M_RATED_LIST; do
     --output-csv "$OUTPUT_CSV" \
     --append
 
-  # ScaLAPACK with 1 process (serial)
-  echo "  ScaLAPACK (1 process)..."
+  # MPI reference with 1 process (to test if it's a ScaLAPACK-specific issue)
+  echo "  MPI reference (1 process)..."
   python -u scripts/bench_step.py \
     --backend blocked \
     --fit-backend native_reference \
@@ -82,39 +82,24 @@ for m_rated in $M_RATED_LIST; do
     --scalapack-launcher mpirun \
     --scalapack-nprocs 1 \
     --scalapack-block-size 64 \
-    --scalapack-native-backend scalapack \
+    --scalapack-native-backend mpi \
     --output-csv "$OUTPUT_CSV" \
     --append
 
-  # ScaLAPACK with 4 processes
-  echo "  ScaLAPACK (4 processes, bs=64)..."
-  python -u scripts/bench_step.py \
-    --backend blocked \
-    --fit-backend native_reference \
-    --n-poems 10000 \
-    --m-rated $m_rated \
-    --seed 42 \
-    --scalapack-launcher mpirun \
-    --scalapack-nprocs 4 \
-    --scalapack-block-size 64 \
-    --scalapack-native-backend scalapack \
-    --output-csv "$OUTPUT_CSV" \
-    --append
-
-  # ScaLAPACK with 4 processes, larger block size
-  echo "  ScaLAPACK (4 processes, bs=128)..."
-  python -u scripts/bench_step.py \
-    --backend blocked \
-    --fit-backend native_reference \
-    --n-poems 10000 \
-    --m-rated $m_rated \
-    --seed 42 \
-    --scalapack-launcher mpirun \
-    --scalapack-nprocs 4 \
-    --scalapack-block-size 128 \
-    --scalapack-native-backend scalapack \
-    --output-csv "$OUTPUT_CSV" \
-    --append
+  # Skip ScaLAPACK tests for now - debugging MPI reference first
+  # echo "  ScaLAPACK (4 processes, bs=64)..."
+  # python -u scripts/bench_step.py \
+  #   --backend blocked \
+  #   --fit-backend native_reference \
+  #   --n-poems 10000 \
+  #   --m-rated $m_rated \
+  #   --seed 42 \
+  #   --scalapack-launcher mpirun \
+  #   --scalapack-nprocs 4 \
+  #   --scalapack-block-size 64 \
+  #   --scalapack-native-backend scalapack \
+  #   --output-csv "$OUTPUT_CSV" \
+  #   --append
 
   echo ""
 done
