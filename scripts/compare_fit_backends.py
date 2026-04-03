@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scalapack-executable", default="native/build/scalapack_gp_fit")
     parser.add_argument("--scalapack-block-size", type=int, default=128)
     parser.add_argument("--scalapack-native-backend", choices=["auto", "mpi", "scalapack"], default="auto")
+    parser.add_argument("--skip-score", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args()
@@ -52,6 +53,8 @@ def main() -> None:
     ratings = rng.normal(size=args.m_rated)
     _log(args.verbose, f"[compare] data ready: n_poems={args.n_poems} dim={args.dim} m_rated={args.m_rated}")
 
+    score_backend = "none" if args.skip_score else "python"
+
     _log(args.verbose, "[compare] running blocked step with python fit backend")
     python_start = perf_counter()
     python_result = run_blocked_step(
@@ -63,6 +66,7 @@ def main() -> None:
         noise=args.noise,
         block_size=args.block_size,
         fit_backend="python",
+        score_backend=score_backend,
     )
     python_end = perf_counter()
     _log(args.verbose, f"[compare] python fit finished in {python_end - python_start:.3f}s (fit={python_result.profile.fit_seconds:.3f}s score={python_result.profile.score_seconds:.3f}s)")
@@ -78,6 +82,7 @@ def main() -> None:
         noise=args.noise,
         block_size=args.block_size,
         fit_backend="native_reference",
+        score_backend=score_backend,
         scalapack_launcher=args.scalapack_launcher,
         scalapack_nprocs=args.scalapack_nprocs,
         scalapack_executable=args.scalapack_executable,
@@ -89,10 +94,7 @@ def main() -> None:
     _log(args.verbose, f"[compare] native fit finished in {native_end - native_start:.3f}s (fit={native_result.profile.fit_seconds:.3f}s score={native_result.profile.score_seconds:.3f}s)")
 
     _log(args.verbose, "[compare] computing agreement metrics")
-    mean_diff = python_result.mean - native_result.mean
-    var_diff = python_result.variance - native_result.variance
     alpha_diff = python_result.state.alpha - native_result.state.alpha
-
     summary = {
         "n_poems": args.n_poems,
         "dim": args.dim,
@@ -101,6 +103,7 @@ def main() -> None:
         "length_scale": args.length_scale,
         "variance": args.variance,
         "noise": args.noise,
+        "skip_score": bool(args.skip_score),
         "scalapack_nprocs": args.scalapack_nprocs,
         "scalapack_block_size": args.scalapack_block_size,
         "scalapack_native_backend": args.scalapack_native_backend,
@@ -108,19 +111,9 @@ def main() -> None:
         "native_fit_seconds": native_result.profile.fit_seconds,
         "python_score_seconds": python_result.profile.score_seconds,
         "native_score_seconds": native_result.profile.score_seconds,
-        "max_abs_mean_diff": float(np.max(np.abs(mean_diff))),
-        "max_abs_variance_diff": float(np.max(np.abs(var_diff))),
-        "rel_mean_diff": _safe_rel_diff(python_result.mean, native_result.mean),
-        "rel_variance_diff": _safe_rel_diff(python_result.variance, native_result.variance),
         "max_abs_alpha_diff": float(np.max(np.abs(alpha_diff))),
         "rel_alpha_diff": _safe_rel_diff(python_result.state.alpha, native_result.state.alpha),
         "log_marginal_likelihood_diff": float((python_result.state.log_marginal_likelihood or 0.0) - (native_result.state.log_marginal_likelihood or 0.0)),
-        "exploit_index_equal": bool(python_result.exploit_index == native_result.exploit_index),
-        "explore_index_equal": bool(python_result.explore_index == native_result.explore_index),
-        "python_exploit_index": int(python_result.exploit_index),
-        "native_exploit_index": int(native_result.exploit_index),
-        "python_explore_index": int(python_result.explore_index),
-        "native_explore_index": int(native_result.explore_index),
         "native_backend": (native_result.state.optimization_result or {}).get("native_backend"),
         "native_message": (native_result.state.optimization_result or {}).get("message"),
         "native_workdir": (native_result.state.optimization_result or {}).get("workdir"),
@@ -128,6 +121,24 @@ def main() -> None:
         "compiled_with_scalapack": (native_result.state.optimization_result or {}).get("compiled_with_scalapack"),
         "total_script_seconds": perf_counter() - total_start,
     }
+
+    if not args.skip_score:
+        mean_diff = python_result.mean - native_result.mean
+        var_diff = python_result.variance - native_result.variance
+        summary.update(
+            {
+                "max_abs_mean_diff": float(np.max(np.abs(mean_diff))),
+                "max_abs_variance_diff": float(np.max(np.abs(var_diff))),
+                "rel_mean_diff": _safe_rel_diff(python_result.mean, native_result.mean),
+                "rel_variance_diff": _safe_rel_diff(python_result.variance, native_result.variance),
+                "exploit_index_equal": bool(python_result.exploit_index == native_result.exploit_index),
+                "explore_index_equal": bool(python_result.explore_index == native_result.explore_index),
+                "python_exploit_index": int(python_result.exploit_index),
+                "native_exploit_index": int(native_result.exploit_index),
+                "python_explore_index": int(python_result.explore_index),
+                "native_explore_index": int(native_result.explore_index),
+            }
+        )
 
     text = json.dumps(summary, indent=2)
     if args.output is None:

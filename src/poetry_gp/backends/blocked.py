@@ -42,6 +42,7 @@ def run_blocked_step(
     optimize_hyperparameters: bool = False,
     optimizer_maxiter: int = 50,
     fit_backend: str = "python",
+    score_backend: str = "python",
     scalapack_launcher: str = "srun",
     scalapack_nprocs: int = 4,
     scalapack_executable: str = "native/build/scalapack_gp_fit",
@@ -100,24 +101,33 @@ def run_blocked_step(
     fit_end = perf_counter()
 
     n = embeddings.shape[0]
-    mean = np.empty(n, dtype=np.float64)
-    variance_arr = np.empty(n, dtype=np.float64)
-
     score_start = perf_counter()
-    for start in range(0, n, block_size):
-        stop = min(start + block_size, n)
-        mu_block, var_block = predict_block(state, embeddings[start:stop])
-        mean[start:stop] = mu_block
-        variance_arr[start:stop] = var_block
+    if score_backend == "none":
+        mean = np.empty(0, dtype=np.float64)
+        variance_arr = np.empty(0, dtype=np.float64)
+    elif score_backend == "python":
+        mean = np.empty(n, dtype=np.float64)
+        variance_arr = np.empty(n, dtype=np.float64)
+        for start in range(0, n, block_size):
+            stop = min(start + block_size, n)
+            mu_block, var_block = predict_block(state, embeddings[start:stop])
+            mean[start:stop] = mu_block
+            variance_arr[start:stop] = var_block
+    else:
+        raise ValueError(f"Unknown score_backend: {score_backend}")
     score_end = perf_counter()
 
     select_start = perf_counter()
-    masked_mean = mean.copy()
-    masked_var = variance_arr.copy()
-    masked_mean[excluded_mask] = -np.inf
-    masked_var[excluded_mask] = -np.inf
-    exploit_index = int(np.argmax(masked_mean))
-    explore_index = int(np.argmax(masked_var))
+    if score_backend == "none":
+        exploit_index = -1
+        explore_index = -1
+    else:
+        masked_mean = mean.copy()
+        masked_var = variance_arr.copy()
+        masked_mean[excluded_mask] = -np.inf
+        masked_var[excluded_mask] = -np.inf
+        exploit_index = int(np.argmax(masked_mean))
+        explore_index = int(np.argmax(masked_var))
     select_end = perf_counter()
 
     optimize_seconds = 0.0
