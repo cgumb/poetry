@@ -858,6 +858,12 @@ NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<
   const int nb = std::max(1, block_size);
   const int nprow = choose_nprow(size);
   const int npcol = size / nprow;
+
+  // Initialize BLACS-MPI interface
+  int blacs_rank = -1;
+  int blacs_size = -1;
+  Cblacs_pinfo(&blacs_rank, &blacs_size);
+
   int ictxt = 0;
   // Get BLACS context from MPI communicator (use 0 instead of -1)
   Cblacs_get(0, 0, &ictxt);
@@ -959,6 +965,12 @@ NativeResult run_scalapack_distributed(
   const int npcol = size / nprow;
 
   std::cerr << "[DEBUG GRID] size=" << size << " nprow=" << nprow << " npcol=" << npcol << std::endl;
+
+  // Initialize BLACS-MPI interface
+  int blacs_rank = -1;
+  int blacs_size = -1;
+  Cblacs_pinfo(&blacs_rank, &blacs_size);
+  std::cerr << "[DEBUG GRID] After Cblacs_pinfo: blacs_rank=" << blacs_rank << " blacs_size=" << blacs_size << std::endl;
 
   int ictxt = 0;
   std::cerr << "[DEBUG GRID] ictxt before Cblacs_get: " << ictxt << std::endl;
