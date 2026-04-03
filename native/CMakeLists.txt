@@ -8,6 +8,9 @@ option(POETRY_ENABLE_SCALAPACK "Enable discovery and linkage of a ScaLAPACK libr
 set(POETRY_SCALAPACK_LIBRARY "" CACHE STRING "Optional explicit path to a ScaLAPACK library")
 
 find_package(MPI REQUIRED)
+
+# Prefer OpenBLAS over FlexiBLAS to avoid dual-library conflicts
+set(BLA_VENDOR OpenBLAS)
 find_package(BLAS REQUIRED)
 
 set(POETRY_SCALAPACK_FOUND FALSE)
