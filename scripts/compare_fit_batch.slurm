@@ -19,8 +19,30 @@ BLOCK_SIZE="${BLOCK_SIZE:-2048}"
 SCALAPACK_BLOCK_SIZE="${SCALAPACK_BLOCK_SIZE:-128}"
 DIM="${DIM:-384}"
 SEED="${SEED:-0}"
+SPACK_SETUP_SCRIPT="${SPACK_SETUP_SCRIPT:-$HOME/161588/spack/share/spack/setup-env.sh}"
+SPACK_ENV_NAME="${SPACK_ENV_NAME:-CS-2050}"
+SPACK_ACTIVATE_REQUIRED="${SPACK_ACTIVATE_REQUIRED:-0}"
 
 cd "$REPO_DIR"
+
+if [[ -f "$SPACK_SETUP_SCRIPT" ]]; then
+  # shellcheck disable=SC1090
+  source "$SPACK_SETUP_SCRIPT"
+  if ! spack env activate "$SPACK_ENV_NAME"; then
+    if [[ "$SPACK_ACTIVATE_REQUIRED" == "1" ]]; then
+      echo "Failed to activate Spack environment: $SPACK_ENV_NAME" >&2
+      exit 1
+    fi
+    echo "Warning: failed to activate Spack environment: $SPACK_ENV_NAME" >&2
+  fi
+else
+  if [[ "$SPACK_ACTIVATE_REQUIRED" == "1" ]]; then
+    echo "Spack setup script not found: $SPACK_SETUP_SCRIPT" >&2
+    exit 1
+  fi
+  echo "Warning: Spack setup script not found: $SPACK_SETUP_SCRIPT" >&2
+fi
+
 source .venv/bin/activate
 unset SLURM_CPU_BIND SLURM_CPU_BIND_LIST SLURM_CPU_BIND_TYPE SLURM_CPU_BIND_VERBOSE
 export OMP_NUM_THREADS=1
