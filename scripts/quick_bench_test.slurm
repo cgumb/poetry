@@ -60,16 +60,16 @@ M_RATED_LIST="100 500 1000 2000"
 for m_rated in $M_RATED_LIST; do
   echo "=== m_rated=$m_rated ==="
 
-  # Python baseline
-  echo "  Python (1 thread)..."
-  python -u scripts/bench_step.py \
-    --backend blocked \
-    --fit-backend python \
-    --n-poems 10000 \
-    --m-rated $m_rated \
-    --seed 42 \
-    --output-csv "$OUTPUT_CSV" \
-    --append
+  # Skip Python baseline for faster debugging
+  # echo "  Python (1 thread)..."
+  # python -u scripts/bench_step.py \
+  #   --backend blocked \
+  #   --fit-backend python \
+  #   --n-poems 10000 \
+  #   --m-rated $m_rated \
+  #   --seed 42 \
+  #   --output-csv "$OUTPUT_CSV" \
+  #   --append
 
   # MPI reference with 1 process (to test if it's a ScaLAPACK-specific issue)
   echo "  MPI reference (1 process)..."
