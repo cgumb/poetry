@@ -43,11 +43,18 @@ def load_and_prepare_data(csv_file: Path) -> pd.DataFrame:
         if "backend" in df.columns:
             # Try to infer from backend and nprocs
             if "nprocs" in df.columns:
-                df["fit_backend"] = df.apply(
-                    lambda row: "native_reference" if pd.notna(row.get("nprocs")) and row.get("nprocs") != "" and row.get("nprocs") != 1
-                    else "python",
-                    axis=1
-                )
+                def infer_backend(row):
+                    nprocs = row.get("nprocs")
+                    # Handle empty strings, NaN, and actual values
+                    if pd.isna(nprocs) or nprocs == "" or nprocs is None:
+                        return "python"
+                    try:
+                        nprocs_int = int(nprocs)
+                        return "native_reference" if nprocs_int > 1 else "python"
+                    except (ValueError, TypeError):
+                        return "python"
+
+                df["fit_backend"] = df.apply(infer_backend, axis=1)
             else:
                 # Can't determine, assume Python
                 df["fit_backend"] = "python"
@@ -62,15 +69,20 @@ def load_and_prepare_data(csv_file: Path) -> pd.DataFrame:
         df["native_backend"] = df["native_backend"].fillna("")
 
     # Fill missing nprocs/block_size with empty string
+    # Also handle the case where the CSV has "nprocs" instead of "scalapack_nprocs"
     if "scalapack_nprocs" not in df.columns:
-        df["scalapack_nprocs"] = ""
-    else:
-        df["scalapack_nprocs"] = df["scalapack_nprocs"].fillna("")
+        if "nprocs" in df.columns:
+            df["scalapack_nprocs"] = df["nprocs"]
+        else:
+            df["scalapack_nprocs"] = ""
+    df["scalapack_nprocs"] = df["scalapack_nprocs"].fillna("")
 
     if "scalapack_block_size" not in df.columns:
-        df["scalapack_block_size"] = ""
-    else:
-        df["scalapack_block_size"] = df["scalapack_block_size"].fillna("")
+        if "block_size" in df.columns:
+            df["scalapack_block_size"] = df["block_size"]
+        else:
+            df["scalapack_block_size"] = ""
+    df["scalapack_block_size"] = df["scalapack_block_size"].fillna("")
 
     # Create a combined backend label
     def make_label(row):
@@ -80,7 +92,8 @@ def load_and_prepare_data(csv_file: Path) -> pd.DataFrame:
             native = row.get("native_backend", "")
             nprocs = row.get("scalapack_nprocs", "")
             bs = row.get("scalapack_block_size", "")
-            if native and nprocs and bs:
+            # Filter out empty strings
+            if native and str(nprocs).strip() and str(bs).strip():
                 return f"ScaLAPACK-{native} (n={nprocs}, bs={bs})"
             else:
                 return "ScaLAPACK"
