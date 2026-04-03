@@ -1025,7 +1025,19 @@ NativeResult run_scalapack_distributed(
   const char uplo = 'L';
   const int ia = 1;
   const int ja = 1;
+
+  std::cerr << "[DEBUG] About to call pdpotrf_: n=" << n_int << " nb=" << nb
+            << " desc_a=[" << desc_a[0] << "," << desc_a[1] << "," << desc_a[2]
+            << "," << desc_a[3] << "," << desc_a[4] << "," << desc_a[5]
+            << "," << desc_a[6] << "," << desc_a[7] << "," << desc_a[8] << "]" << std::endl;
+  std::cerr << "[DEBUG] local_a.size()=" << local_a.size() << " local_a.data()=" << (void*)local_a.data() << std::endl;
+  std::cerr.flush();
+
   pdpotrf_(&uplo, &n_int, local_a.data(), &ia, &ja, desc_a, &result.info_potrf);
+
+  std::cerr << "[DEBUG] pdpotrf_ returned with info=" << result.info_potrf << std::endl;
+  std::cerr.flush();
+
   MPI_Barrier(comm);
   const auto factor_end = std::chrono::steady_clock::now();
 
