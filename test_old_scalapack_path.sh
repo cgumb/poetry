@@ -4,6 +4,18 @@
 
 set -euo pipefail
 
+# Spack environment (same as Slurm scripts)
+SPACK_SETUP_SCRIPT="${SPACK_SETUP_SCRIPT:-$HOME/161588/spack/share/spack/setup-env.sh}"
+SPACK_ENV_NAME="${SPACK_ENV_NAME:-CS-2050}"
+
+if [[ -f "$SPACK_SETUP_SCRIPT" ]]; then
+  echo "Activating Spack environment: $SPACK_ENV_NAME"
+  source "$SPACK_SETUP_SCRIPT"
+  spack env activate "$SPACK_ENV_NAME" || echo "Warning: Spack activation failed"
+else
+  echo "Warning: Spack setup script not found at $SPACK_SETUP_SCRIPT"
+fi
+
 # Create test data
 python3 << 'EOF'
 import numpy as np
