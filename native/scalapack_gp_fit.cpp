@@ -812,6 +812,16 @@ std::vector<double> build_local_rbf_blocks_from_features(
   }
 
   std::cerr << "[DEBUG] Rank (" << myrow << "," << mycol << ") completed local kernel assembly" << std::endl;
+
+  // Debug: Check first few values
+  if (myrow == 0 && mycol == 0) {
+    std::cerr << "[DEBUG] First few diagonal values:" << std::endl;
+    for (int i = 0; i < std::min(5, lld); ++i) {
+      std::cerr << "  local[" << i << "," << i << "] = " << local_matrix[i + static_cast<std::size_t>(i) * lld] << std::endl;
+    }
+    std::cerr << "[DEBUG] First off-diagonal: local[0,1] = " << local_matrix[0 + static_cast<std::size_t>(1) * lld] << std::endl;
+  }
+
   return local_matrix;
 }
 #endif
