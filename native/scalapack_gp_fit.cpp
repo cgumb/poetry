@@ -1036,11 +1036,37 @@ NativeResult run_scalapack_distributed(
   const int ia = 1;
   const int ja = 1;
 
+  // Sanity check: verify local_a is populated and has reasonable values
+  if (rank == 0) {
+    double min_val = 1e100;
+    double max_val = -1e100;
+    int nan_count = 0;
+    for (size_t i = 0; i < local_a.size(); ++i) {
+      if (std::isnan(local_a[i])) {
+        nan_count++;
+      } else {
+        min_val = std::min(min_val, local_a[i]);
+        max_val = std::max(max_val, local_a[i]);
+      }
+    }
+    std::cerr << "[SANITY CHECK] local_a: size=" << local_a.size()
+              << " min=" << min_val << " max=" << max_val
+              << " NaNs=" << nan_count << std::endl;
+
+    // Check for all zeros (sign of assembly failure)
+    int zero_count = 0;
+    for (size_t i = 0; i < std::min(size_t(100), local_a.size()); ++i) {
+      if (local_a[i] == 0.0) zero_count++;
+    }
+    std::cerr << "[SANITY CHECK] First 100 elements: " << zero_count << " zeros" << std::endl;
+  }
+
   std::cerr << "[DEBUG] About to call pdpotrf_: n=" << n_int << " nb=" << nb
             << " desc_a=[" << desc_a[0] << "," << desc_a[1] << "," << desc_a[2]
             << "," << desc_a[3] << "," << desc_a[4] << "," << desc_a[5]
             << "," << desc_a[6] << "," << desc_a[7] << "," << desc_a[8] << "]" << std::endl;
-  std::cerr << "[DEBUG] local_a.size()=" << local_a.size() << " local_a.data()=" << (void*)local_a.data() << std::endl;
+  std::cerr << "[DEBUG] local_a.size()=" << local_a.size() << " local_a.data()=" << (void*)local_a.data()
+            << " lld_a=" << lld_a << " local_cols=" << local_cols << std::endl;
   std::cerr.flush();
 
   pdpotrf_(&uplo, &n_int, local_a.data(), &ia, &ja, desc_a, &result.info_potrf);
