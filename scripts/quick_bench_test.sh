@@ -53,7 +53,7 @@ for m_rated in $M_RATED_LIST; do
     --n-poems 10000 \
     --m-rated $m_rated \
     --seed 42 \
-    --scalapack-launcher local \
+    --scalapack-launcher mpirun \
     --scalapack-nprocs 1 \
     --scalapack-block-size 64 \
     --scalapack-native-backend scalapack \
