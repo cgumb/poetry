@@ -1017,8 +1017,18 @@ NativeResult run_scalapack_distributed(
   }
 
   // Step 3: Distribute RHS (still needed, but much smaller than matrix)
+  std::cerr << "[DEBUG] Rank " << rank << " about to distribute RHS, local_rows=" << local_rows << std::endl;
+  std::cerr.flush();
+
   distribute_rhs_block_cyclic(rhs_root, n, nb, rank, grid_rows, grid_cols, myrow, mycol, local_rows, local_b, comm);
+
+  std::cerr << "[DEBUG] Rank " << rank << " RHS distributed" << std::endl;
+  std::cerr.flush();
+
   MPI_Barrier(comm);
+
+  std::cerr << "[DEBUG] Rank " << rank << " passed barrier" << std::endl;
+  std::cerr.flush();
 
   // Step 4: Cholesky factorization (same as before)
   const auto factor_start = std::chrono::steady_clock::now();
