@@ -327,6 +327,10 @@ def _run_prepared_fit(
             flush=True,
         )
     if completed.returncode != 0 and result.implemented:
+        # Print stderr to help debug
+        if completed.stderr:
+            print("[native-fit] stderr from failed run:", flush=True)
+            print(completed.stderr, flush=True)
         raise RuntimeError(result.message)
     if result.info_potrf != 0 or result.info_potrs not in {0, -1}:
         raise RuntimeError(result.message)
