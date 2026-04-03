@@ -166,9 +166,29 @@ def fit_exact_gp_scalapack(
     if verbose:
         print(f"[native-fit] workdir: {prepared.workdir}", flush=True)
         print(f"[native-fit] command: {' '.join(prepared.command)}", flush=True)
-    completed = subprocess.run(prepared.command, check=False)
+    completed = subprocess.run(prepared.command, check=False, capture_output=True, text=True)
     if verbose:
         print(f"[native-fit] launcher return code: {completed.returncode}", flush=True)
+        if completed.stdout:
+            print(completed.stdout, end="", flush=True)
+        if completed.stderr:
+            print(completed.stderr, end="", flush=True)
+
+    if not prepared.output_meta_path.exists():
+        pieces = [
+            "Native fit command failed before writing output metadata.",
+            f"command={' '.join(prepared.command)}",
+            f"returncode={completed.returncode}",
+            f"workdir={prepared.workdir}",
+        ]
+        stdout = completed.stdout.strip()
+        stderr = completed.stderr.strip()
+        if stdout:
+            pieces.append(f"stdout={stdout}")
+        if stderr:
+            pieces.append(f"stderr={stderr}")
+        raise RuntimeError(" | ".join(pieces))
+
     meta = json.loads(prepared.output_meta_path.read_text())
     n = int(meta["n"])
     alpha = np.fromfile(prepared.alpha_bin_path, dtype=np.float64, count=n)
