@@ -812,15 +812,37 @@ std::vector<double> build_local_rbf_blocks_from_features(
   }
 
   std::cerr << "[DEBUG] Rank (" << myrow << "," << mycol << ") completed local kernel assembly" << std::endl;
+  std::cerr.flush();
 
   // Debug: Check first few values
-  if (myrow == 0 && mycol == 0) {
-    std::cerr << "[DEBUG] First few diagonal values:" << std::endl;
-    for (int i = 0; i < std::min(5, lld); ++i) {
-      std::cerr << "  local[" << i << "," << i << "] = " << local_matrix[i + static_cast<std::size_t>(i) * lld] << std::endl;
+  std::cerr << "[DEBUG] Checking matrix values for rank (" << myrow << "," << mycol << ")..." << std::endl;
+  std::cerr.flush();
+
+  if (local_matrix.size() >= 1) {
+    std::cerr << "[DEBUG] local_matrix.size() = " << local_matrix.size() << std::endl;
+    std::cerr << "[DEBUG] lld=" << lld << " local_cols=" << local_cols << std::endl;
+    std::cerr.flush();
+
+    // Print first 5 diagonal elements
+    const int n_diag = std::min(5, std::min(lld, local_cols));
+    for (int i = 0; i < n_diag; ++i) {
+      const size_t idx = i + static_cast<std::size_t>(i) * lld;
+      std::cerr << "[DEBUG]   local[" << i << "," << i << "] at idx=" << idx
+                << " = " << local_matrix[idx] << std::endl;
+      std::cerr.flush();
     }
-    std::cerr << "[DEBUG] First off-diagonal: local[0,1] = " << local_matrix[0 + static_cast<std::size_t>(1) * lld] << std::endl;
+
+    // Print first off-diagonal if it exists
+    if (local_cols > 1) {
+      const size_t idx = 0 + static_cast<std::size_t>(1) * lld;
+      std::cerr << "[DEBUG]   local[0,1] at idx=" << idx
+                << " = " << local_matrix[idx] << std::endl;
+      std::cerr.flush();
+    }
   }
+
+  std::cerr << "[DEBUG] Matrix value check complete" << std::endl;
+  std::cerr.flush();
 
   return local_matrix;
 }
