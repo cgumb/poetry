@@ -287,26 +287,39 @@ int main(int argc, char** argv) {
     result.requested_backend = args.backend;
 
     if (rank == 0) {
+      std::cerr << "[DEBUG] Result returned. alpha.size()=" << result.alpha.size()
+                << " chol.size()=" << result.chol.size() << std::endl;
+
       if (result.alpha.empty()) {
+        std::cerr << "[DEBUG] Alpha is empty, assigning zeros" << std::endl;
         result.alpha.assign(meta.n, 0.0);
       }
       if (result.chol.empty()) {
+        std::cerr << "[DEBUG] Chol is empty, assigning zeros" << std::endl;
         result.chol.assign(meta.n * meta.n, 0.0);
       }
+
+      std::cerr << "[DEBUG] Writing alpha to " << args.alpha_bin << std::endl;
       write_binary_vector(args.alpha_bin, result.alpha);
+      std::cerr << "[DEBUG] Writing chol to " << args.chol_bin << std::endl;
       write_binary_matrix(args.chol_bin, result.chol);
+      std::cerr << "[DEBUG] Writing output metadata to " << args.output_meta << std::endl;
       write_output_meta(args.output_meta, result, meta.n, size);
+
       std::cerr << "[scalapack_gp_fit] backend=" << result.backend
                 << " requested=" << result.requested_backend
                 << " n=" << meta.n
                 << " ranks=" << size << "\n";
       std::cerr << "[DEBUG] info_potrf=" << result.info_potrf << " info_potrs=" << result.info_potrs << std::endl;
+
       if (!result.implemented) {
         exit_code = 3;
       } else if (result.info_potrf != 0 || result.info_potrs != 0) {
         std::cerr << "[ERROR] Factorization or solve failed!" << std::endl;
         exit_code = 2;
       }
+
+      std::cerr << "[DEBUG] Output writing complete, exit_code=" << exit_code << std::endl;
     }
   } catch (const std::exception& ex) {
     if (rank == 0) {
@@ -315,6 +328,8 @@ int main(int argc, char** argv) {
     exit_code = 1;
   }
 
+  std::cerr << "[DEBUG] Rank " << rank << " calling MPI_Finalize..." << std::endl;
   MPI_Finalize();
+  std::cerr << "[DEBUG] Rank " << rank << " MPI_Finalize complete, returning " << exit_code << std::endl;
   return exit_code;
 }
