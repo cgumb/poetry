@@ -28,6 +28,8 @@ class ScaLAPACKFitResult:
     info_potrs: int
     implemented: bool
     backend: str
+    requested_backend: str
+    compiled_with_scalapack: bool
     message: str
     workdir: Path
 
@@ -58,6 +60,7 @@ def prepare_scalapack_fit_workdir(
     block_size: int = 128,
     grid_rows: int | None = None,
     grid_cols: int | None = None,
+    native_backend: str = "auto",
     workdir: Path | None = None,
 ) -> ScaLAPACKPreparedRun:
     K_rr = np.asarray(K_rr, dtype=np.float64)
@@ -97,8 +100,12 @@ def prepare_scalapack_fit_workdir(
         command = [launcher, "-n", str(nprocs), executable]
     elif launcher == "mpirun":
         command = [launcher, "-np", str(nprocs), executable]
+    elif launcher in {"local", "none"}:
+        if nprocs != 1:
+            raise ValueError("launcher='local' requires nprocs=1")
+        command = [executable]
     else:
-        raise ValueError("launcher must be 'srun' or 'mpirun'")
+        raise ValueError("launcher must be 'srun', 'mpirun', or 'local'")
     command += [
         "--input-meta",
         str(input_meta_path),
@@ -112,6 +119,10 @@ def prepare_scalapack_fit_workdir(
         str(alpha_bin_path),
         "--chol-bin",
         str(chol_bin_path),
+        "--backend",
+        native_backend,
+        "--block-size",
+        str(block_size),
     ]
 
     return ScaLAPACKPreparedRun(
@@ -136,6 +147,7 @@ def fit_exact_gp_scalapack(
     block_size: int = 128,
     grid_rows: int | None = None,
     grid_cols: int | None = None,
+    native_backend: str = "auto",
     workdir: Path | None = None,
     verbose: bool = False,
 ) -> ScaLAPACKFitResult:
@@ -148,6 +160,7 @@ def fit_exact_gp_scalapack(
         block_size=block_size,
         grid_rows=grid_rows,
         grid_cols=grid_cols,
+        native_backend=native_backend,
         workdir=workdir,
     )
     if verbose:
@@ -175,14 +188,16 @@ def fit_exact_gp_scalapack(
         info_potrs=int(meta.get("info_potrs", -1)),
         implemented=bool(meta.get("implemented", False)),
         backend=str(meta.get("backend", "unknown")),
+        requested_backend=str(meta.get("requested_backend", native_backend)),
+        compiled_with_scalapack=bool(meta.get("compiled_with_scalapack", False)),
         message=str(meta.get("message", "")),
         workdir=prepared.workdir,
     )
     if verbose:
         print(
             "[native-fit] output meta: "
-            f"backend={result.backend} implemented={result.implemented} "
-            f"info_potrf={result.info_potrf} info_potrs={result.info_potrs}",
+            f"backend={result.backend} requested={result.requested_backend} "
+            f"implemented={result.implemented} info_potrf={result.info_potrf} info_potrs={result.info_potrs}",
             flush=True,
         )
     if completed.returncode != 0 and result.implemented:
@@ -207,6 +222,7 @@ def fit_exact_gp_scalapack_from_rated(
     block_size: int = 128,
     grid_rows: int | None = None,
     grid_cols: int | None = None,
+    native_backend: str = "auto",
     workdir: Path | None = None,
     verbose: bool = False,
 ) -> GPState:
@@ -232,6 +248,7 @@ def fit_exact_gp_scalapack_from_rated(
         block_size=block_size,
         grid_rows=grid_rows,
         grid_cols=grid_cols,
+        native_backend=native_backend,
         workdir=workdir,
         verbose=verbose,
     )
@@ -248,6 +265,8 @@ def fit_exact_gp_scalapack_from_rated(
         optimization_result={
             "fit_backend": "native_reference",
             "native_backend": result.backend,
+            "requested_native_backend": result.requested_backend,
+            "compiled_with_scalapack": result.compiled_with_scalapack,
             "fit_total_seconds": result.total_seconds,
             "message": result.message,
             "workdir": str(result.workdir),
