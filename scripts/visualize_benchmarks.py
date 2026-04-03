@@ -33,18 +33,59 @@ def load_and_prepare_data(csv_file: Path) -> pd.DataFrame:
     """Load CSV and prepare for plotting."""
     df = pd.read_csv(csv_file)
 
+    # Print column names for debugging
+    print(f"CSV columns: {list(df.columns)}")
+    print(f"Number of rows: {len(df)}")
+
+    # Handle different possible column names and missing values
+    # Check if we have fit_backend or backend column
+    if "fit_backend" not in df.columns and "backend" in df.columns:
+        # Infer fit_backend from other columns or use backend
+        if "native_backend" in df.columns:
+            df["fit_backend"] = df.apply(
+                lambda row: "python" if pd.isna(row.get("native_backend")) or row.get("native_backend") == ""
+                else "native_reference",
+                axis=1
+            )
+        else:
+            # Assume Python if we can't tell
+            df["fit_backend"] = "python"
+
+    # Fill missing native_backend with empty string
+    if "native_backend" not in df.columns:
+        df["native_backend"] = ""
+    else:
+        df["native_backend"] = df["native_backend"].fillna("")
+
+    # Fill missing nprocs/block_size with empty string
+    if "scalapack_nprocs" not in df.columns:
+        df["scalapack_nprocs"] = ""
+    else:
+        df["scalapack_nprocs"] = df["scalapack_nprocs"].fillna("")
+
+    if "scalapack_block_size" not in df.columns:
+        df["scalapack_block_size"] = ""
+    else:
+        df["scalapack_block_size"] = df["scalapack_block_size"].fillna("")
+
     # Create a combined backend label
-    df["backend_label"] = df.apply(
-        lambda row: (
-            f"Python" if row["fit_backend"] == "python"
-            else f"ScaLAPACK-{row['native_backend']} (n={row['scalapack_nprocs']}, bs={row['scalapack_block_size']})"
-        ),
-        axis=1,
-    )
+    def make_label(row):
+        if row.get("fit_backend") == "python":
+            return "Python"
+        else:
+            native = row.get("native_backend", "")
+            nprocs = row.get("scalapack_nprocs", "")
+            bs = row.get("scalapack_block_size", "")
+            if native and nprocs and bs:
+                return f"ScaLAPACK-{native} (n={nprocs}, bs={bs})"
+            else:
+                return "ScaLAPACK"
+
+    df["backend_label"] = df.apply(make_label, axis=1)
 
     # Simplified label for cleaner plots
     df["backend_simple"] = df.apply(
-        lambda row: "Python" if row["fit_backend"] == "python" else "ScaLAPACK",
+        lambda row: "Python" if row.get("fit_backend") == "python" else "ScaLAPACK",
         axis=1,
     )
 
@@ -56,18 +97,30 @@ def plot_python_vs_scalapack_by_size(df: pd.DataFrame, output_dir: Path, fmt: st
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
     # Group by m_rated and backend
-    python_data = df[df["fit_backend"] == "python"].groupby("m_rated").agg({
-        "fit_seconds": "mean",
-        "total_seconds": "mean",
-    }).reset_index()
+    python_df = df[df["fit_backend"] == "python"]
+    scalapack_df = df[df["fit_backend"] == "native_reference"]
 
-    scalapack_data = df[df["fit_backend"] == "native_reference"].groupby("m_rated").agg({
-        "fit_seconds": "mean",
-        "total_seconds": "mean",
-    }).reset_index()
+    if python_df.empty:
+        print("Warning: No Python data found")
+        python_data = pd.DataFrame()
+    else:
+        python_data = python_df.groupby("m_rated").agg({
+            "fit_seconds": "mean",
+            "total_seconds": "mean",
+        }).reset_index()
+
+    if scalapack_df.empty:
+        print("Warning: No ScaLAPACK data found")
+        scalapack_data = pd.DataFrame()
+    else:
+        scalapack_data = scalapack_df.groupby("m_rated").agg({
+            "fit_seconds": "mean",
+            "total_seconds": "mean",
+        }).reset_index()
 
     # Plot 1: Fit time
-    ax1.plot(python_data["m_rated"], python_data["fit_seconds"], "o-", label="Python", linewidth=2, markersize=8)
+    if not python_data.empty:
+        ax1.plot(python_data["m_rated"], python_data["fit_seconds"], "o-", label="Python", linewidth=2, markersize=8)
     if not scalapack_data.empty:
         ax1.plot(scalapack_data["m_rated"], scalapack_data["fit_seconds"], "s-", label="ScaLAPACK (avg)", linewidth=2, markersize=8)
     ax1.set_xlabel("Problem Size (m_rated)", fontsize=12)
@@ -79,7 +132,8 @@ def plot_python_vs_scalapack_by_size(df: pd.DataFrame, output_dir: Path, fmt: st
     ax1.set_yscale("log")
 
     # Plot 2: Total time
-    ax2.plot(python_data["m_rated"], python_data["total_seconds"], "o-", label="Python", linewidth=2, markersize=8)
+    if not python_data.empty:
+        ax2.plot(python_data["m_rated"], python_data["total_seconds"], "o-", label="Python", linewidth=2, markersize=8)
     if not scalapack_data.empty:
         ax2.plot(scalapack_data["m_rated"], scalapack_data["total_seconds"], "s-", label="ScaLAPACK (avg)", linewidth=2, markersize=8)
     ax2.set_xlabel("Problem Size (m_rated)", fontsize=12)
