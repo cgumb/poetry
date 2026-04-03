@@ -12,6 +12,15 @@
 #include <string>
 #include <vector>
 
+// BLAS dgemm for optimized kernel assembly
+extern "C" {
+  void dgemm_(const char* transa, const char* transb,
+              const int* m, const int* n, const int* k,
+              const double* alpha, const double* a, const int* lda,
+              const double* b, const int* ldb,
+              const double* beta, double* c, const int* ldc);
+}
+
 #ifdef HAVE_SCALAPACK
 extern "C" {
 void Cblacs_pinfo(int* mypnum, int* nprocs);
@@ -775,25 +784,43 @@ std::vector<double> build_local_rbf_blocks_from_features(
 
     // Local column index for this block
     const int local_col_start = (block_j / npcol) * nb;
+    const int local_row_start = (block_i / nprow) * nb;
 
-    // Compute kernel values for this block
+    // Use BLAS DGEMM to compute Gram matrix block: G = X_rows @ X_cols^T
+    // This is MUCH faster than computing dot products one at a time
+    std::vector<double> gram_block(block_rows * block_cols, 0.0);
+
+    {
+      const char transa = 'N';  // X_rows is not transposed
+      const char transb = 'T';  // X_cols is transposed
+      const double alpha = 1.0;
+      const double beta = 0.0;
+      const int m = block_rows;
+      const int n_cols = block_cols;
+      const int k = d;
+      const int lda = d;  // Leading dimension of X_rows (row-major, so stride is d)
+      const int ldb = d;  // Leading dimension of X_cols (row-major, so stride is d)
+      const int ldc = block_rows;  // Leading dimension of output (column-major)
+
+      // X_rows: features for rows [global_i_start : global_i_start + block_rows]
+      // X_cols: features for cols [global_j_start : global_j_start + block_cols]
+      const double* x_rows = x.data() + global_i_start * static_cast<std::size_t>(d);
+      const double* x_cols = x.data() + global_j_start * static_cast<std::size_t>(d);
+
+      dgemm_(&transa, &transb, &m, &n_cols, &k, &alpha, x_rows, &lda, x_cols, &ldb, &beta, gram_block.data(), &ldc);
+    }
+
+    // Apply RBF transformation to Gram matrix block
     for (int local_i = 0; local_i < block_rows; ++local_i) {
       const int global_i = global_i_start + local_i;
-
-      // Local row index (accounting for block-cyclic distribution)
-      const int local_row_start = (block_i / nprow) * nb;
       const int local_row = local_row_start + local_i;
 
       for (int local_j = 0; local_j < block_cols; ++local_j) {
         const int global_j = global_j_start + local_j;
         const int local_col = local_col_start + local_j;
 
-        // Compute dot product
-        double dot = 0.0;
-        for (int k = 0; k < d; ++k) {
-          dot += x[global_i * static_cast<std::size_t>(d) + k] *
-                 x[global_j * static_cast<std::size_t>(d) + k];
-        }
+        // Get dot product from precomputed Gram matrix
+        const double dot = gram_block[local_i + local_j * block_rows];
 
         // RBF kernel: exp(-0.5 * ||x_i - x_j||^2 / length_scale^2)
         double d2 = norms[global_i] + norms[global_j] - 2.0 * dot;
