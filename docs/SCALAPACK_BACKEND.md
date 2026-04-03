@@ -92,7 +92,7 @@ python scripts/compare_fit_backends.py \
 
 For interactive sanity checks on a compute node, using `mpirun` inside an allocation is usually easier than nested `srun`.
 
-The repo now includes a reusable batch template:
+The repo includes a reusable batch template:
 
 - `scripts/compare_fit_batch.slurm`
 
@@ -106,8 +106,11 @@ The batch template:
 
 - activates the project virtual environment
 - rebuilds the native executable
-- disables inherited CPU binding variables
+- disables inherited Slurm CPU binding variables
+- sets a neutral Open MPI binding policy (`OMPI_MCA_hwloc_base_binding_policy=none`)
 - runs one or more comparison cases with `compare_fit_backends.py`
+
+The explicit Open MPI binding settings are needed because on this cluster, plain `mpirun` inside a Slurm allocation may otherwise fail its smoke test or native launch with a binding-policy error.
 
 The following environment variables can be overridden:
 
