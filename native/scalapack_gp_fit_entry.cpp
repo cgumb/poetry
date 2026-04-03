@@ -159,20 +159,27 @@ std::vector<double> build_dense_rbf_matrix_from_features_entry(
 
   // Step 2: Compute Gram matrix G = X @ X^T using BLAS DGEMM
   // This replaces the O(n^2*d) triple loop with optimized BLAS
+  //
+  // IMPORTANT: X is stored ROW-MAJOR (n×d) as x[i*d + k]
+  // But BLAS expects COLUMN-MAJOR (Fortran-style)
+  // Row-major n×d looks like column-major d×n to BLAS
+  //
+  // To compute G = X @ X^T where X is n×d row-major:
+  //   In BLAS column-major view: G = A^T @ A where A is d×n
+  //   Use: transa='T', transb='N', LDA=d, LDB=d
   std::vector<double> gram(n * n, 0.0);
   const int n_int = static_cast<int>(n);
-  const char transa = 'N';  // X is not transposed
-  const char transb = 'T';  // X^T is transposed
+  const char transa = 'T';  // Transpose A (d×n) to get n×d
+  const char transb = 'N';  // Don't transpose B (d×n)
   const double alpha = 1.0;
   const double beta = 0.0;
 
-  // C = alpha * A @ B^T + beta * C
-  // gram(n x n) = 1.0 * x(n x d) @ x^T(d x n) + 0.0 * gram
+  // G(n×n) = A^T(n×d) @ A(d×n)
   dgemm_(&transa, &transb,
-         &n_int, &n_int, &d,           // M, N, K dimensions
-         &alpha, x.data(), &n_int,     // alpha, A, LDA
-         x.data(), &n_int,             // B (same as A for Gram matrix), LDB
-         &beta, gram.data(), &n_int);  // beta, C, LDC
+         &n_int, &n_int, &d,        // M, N, K dimensions
+         &alpha, x.data(), &d,      // A, LDA=d (leading dim of d×n array)
+         x.data(), &d,              // B, LDB=d
+         &beta, gram.data(), &n_int); // C, LDC=n
 
   // Step 3: Apply RBF kernel transformation
   // K[i,j] = variance * exp(-0.5 * ||x[i] - x[j]||^2 / length_scale^2)
