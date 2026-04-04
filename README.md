@@ -238,15 +238,18 @@ python scripts/app/impute_missing_metadata.py \
   --poems data/poems_imputed.parquet \
   --generate-llm-batch data/llm_batch_requests.jsonl
 
-# Step 3: Submit to Claude Batch API (requires anthropic CLI and API key)
+# Step 3: Submit to Claude Batch API (requires anthropic SDK and API key)
 pip install -r requirements-llm.txt
 export ANTHROPIC_API_KEY='your-key'
-anthropic messages batches create --input-file data/llm_batch_requests.jsonl
+python scripts/app/submit_llm_batch.py --input data/llm_batch_requests.jsonl
 
-# Step 4: Download results when complete
-anthropic messages batches results <batch_id> > data/llm_batch_results.jsonl
+# Step 4: Check status (optional)
+python scripts/app/check_llm_batch.py
 
-# Step 5: Apply results back to dataframe
+# Step 5: Download results when complete
+python scripts/app/download_llm_batch.py --output data/llm_batch_results.jsonl
+
+# Step 6: Apply results back to dataframe
 python scripts/app/apply_llm_imputation_results.py \
   --poems data/poems_imputed.parquet \
   --results data/llm_batch_results.jsonl \

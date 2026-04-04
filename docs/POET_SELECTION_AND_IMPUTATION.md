@@ -151,11 +151,11 @@ Unknown poem with style similar to Emily Dickinson's known works
 
 **Complete Workflow**:
 
-#### Step 1: Install Anthropic CLI (optional dependency)
+#### Step 1: Install Anthropic SDK (optional dependency)
 ```bash
 source .venv/bin/activate
 pip install -r requirements-llm.txt
-# OR: pip install anthropic
+# Contains: anthropic>=0.34
 ```
 
 #### Step 2: Generate batch request file
@@ -175,26 +175,51 @@ python scripts/app/impute_missing_metadata.py \
 
 #### Step 3: Submit to Claude Batch API
 ```bash
-# Set your API key
+# Set your API key (or will prompt)
 export ANTHROPIC_API_KEY='your-api-key-here'
 
 # Submit the batch
-anthropic messages batches create --input-file data/llm_batch_requests.jsonl
+python scripts/app/submit_llm_batch.py --input data/llm_batch_requests.jsonl
 
-# Returns: batch_abc123... (save this ID)
+# Returns: batch_abc123... (automatically saved to *_batch_id.txt)
+```
+
+**Output**:
+```
+✓ Batch submitted successfully!
+  Batch ID: batch_abc123...
+  Status: validating
+  Request counts: {'processing': 247, 'succeeded': 0, 'errored': 0}
+
+Batch ID saved to: data/llm_batch_requests_batch_id.txt
 ```
 
 #### Step 4: Check batch status
 ```bash
 # Check if complete (batches typically take minutes to hours)
-anthropic messages batches retrieve batch_abc123...
+python scripts/app/check_llm_batch.py --batch-id batch_abc123...
 
-# Status will show: in_progress → processing → ended
+# Or without batch ID (auto-finds from *_batch_id.txt)
+python scripts/app/check_llm_batch.py
+```
+
+**Output when complete**:
+```
+Status: ended
+Request counts:
+  Processing: 0
+  Succeeded: 229
+  Errored: 18
+
+✓ Batch complete!
 ```
 
 #### Step 5: Download results
 ```bash
-anthropic messages batches results batch_abc123... > data/llm_batch_results.jsonl
+python scripts/app/download_llm_batch.py --batch-id batch_abc123... --output data/llm_batch_results.jsonl
+
+# Or without batch ID (auto-finds from *_batch_id.txt)
+python scripts/app/download_llm_batch.py --output data/llm_batch_results.jsonl
 ```
 
 #### Step 6: Apply results to dataframe
@@ -285,14 +310,14 @@ python scripts/app/impute_missing_metadata.py \
 
 # Step 4: Submit to Claude Batch API
 export ANTHROPIC_API_KEY='your-api-key-here'
-anthropic messages batches create --input-file data/llm_batch_requests.jsonl
-# Returns: batch_abc123... (save this ID)
+python scripts/app/submit_llm_batch.py --input data/llm_batch_requests.jsonl
+# Returns batch ID, automatically saved to *_batch_id.txt
 
 # Step 5: Check status (wait for completion)
-anthropic messages batches retrieve batch_abc123...
+python scripts/app/check_llm_batch.py
 
 # Step 6: Download results when complete
-anthropic messages batches results batch_abc123... > data/llm_batch_results.jsonl
+python scripts/app/download_llm_batch.py --output data/llm_batch_results.jsonl
 
 # Step 7: Apply results back to dataframe
 python scripts/app/apply_llm_imputation_results.py \
