@@ -19,6 +19,7 @@ dependencies = [
   "mpi4py>=3.1",
   "streamlit>=1.36",
   "umap-learn>=0.5.6",
+  "rich>=13.7",
 ]
 
 [tool.setuptools]
