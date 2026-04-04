@@ -128,9 +128,16 @@ def plot_python_vs_scalapack_by_size(df: pd.DataFrame, output_dir: Path, fmt: st
 
     if scalapack_df.empty:
         print("Warning: No ScaLAPACK data found")
-        scalapack_data = pd.DataFrame()
+        scalapack_best = pd.DataFrame()
+        scalapack_avg = pd.DataFrame()
     else:
-        scalapack_data = scalapack_df.groupby("m_rated").agg({
+        # Best configuration (min time) for each problem size
+        scalapack_best = scalapack_df.groupby("m_rated").agg({
+            "fit_seconds": "min",
+            "total_seconds": "min",
+        }).reset_index()
+        # Average across all configurations (for comparison)
+        scalapack_avg = scalapack_df.groupby("m_rated").agg({
             "fit_seconds": "mean",
             "total_seconds": "mean",
         }).reset_index()
@@ -138,8 +145,10 @@ def plot_python_vs_scalapack_by_size(df: pd.DataFrame, output_dir: Path, fmt: st
     # Plot 1: Fit time
     if not python_data.empty:
         ax1.plot(python_data["m_rated"], python_data["fit_seconds"], "o-", label="Python", linewidth=2, markersize=8)
-    if not scalapack_data.empty:
-        ax1.plot(scalapack_data["m_rated"], scalapack_data["fit_seconds"], "s-", label="ScaLAPACK (avg)", linewidth=2, markersize=8)
+    if not scalapack_best.empty:
+        ax1.plot(scalapack_best["m_rated"], scalapack_best["fit_seconds"], "s-", label="ScaLAPACK (best)", linewidth=2, markersize=8, color="C2")
+    if not scalapack_avg.empty:
+        ax1.plot(scalapack_avg["m_rated"], scalapack_avg["fit_seconds"], "s--", label="ScaLAPACK (avg)", linewidth=1, markersize=4, alpha=0.5, color="C2")
     ax1.set_xlabel("Problem Size (m_rated)", fontsize=12)
     ax1.set_ylabel("Fit Time (seconds)", fontsize=12)
     ax1.set_title("GP Fit Performance vs Problem Size", fontsize=14, fontweight="bold")
@@ -151,8 +160,10 @@ def plot_python_vs_scalapack_by_size(df: pd.DataFrame, output_dir: Path, fmt: st
     # Plot 2: Total time
     if not python_data.empty:
         ax2.plot(python_data["m_rated"], python_data["total_seconds"], "o-", label="Python", linewidth=2, markersize=8)
-    if not scalapack_data.empty:
-        ax2.plot(scalapack_data["m_rated"], scalapack_data["total_seconds"], "s-", label="ScaLAPACK (avg)", linewidth=2, markersize=8)
+    if not scalapack_best.empty:
+        ax2.plot(scalapack_best["m_rated"], scalapack_best["total_seconds"], "s-", label="ScaLAPACK (best)", linewidth=2, markersize=8, color="C2")
+    if not scalapack_avg.empty:
+        ax2.plot(scalapack_avg["m_rated"], scalapack_avg["total_seconds"], "s--", label="ScaLAPACK (avg)", linewidth=1, markersize=4, alpha=0.5, color="C2")
     ax2.set_xlabel("Problem Size (m_rated)", fontsize=12)
     ax2.set_ylabel("Total Time (seconds)", fontsize=12)
     ax2.set_title("Total Runtime vs Problem Size", fontsize=14, fontweight="bold")
