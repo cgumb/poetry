@@ -159,7 +159,15 @@ Interactive CLI:
 python scripts/app/interactive_cli.py
 ```
 
-The CLI currently supports rating poems, exploit/explore recommendations, session persistence, search, and timing output for each GP step.
+The CLI features:
+- 🎨 **Rich terminal UI** with colors, panels, and tables
+- 👥 **Multi-user support** - multiple users can maintain separate rating sessions
+- 📊 **Exploit/explore recommendations** powered by Gaussian processes
+- 🔍 **Search** by title, poet, or text content
+- ⏱️ **Performance metrics** for each GP computation
+- 💾 **Session persistence** - resume where you left off
+
+Install rich if needed: `uv pip install rich` or reinstall dependencies from `pyproject.toml`.
 
 Streamlit app:
 
@@ -200,6 +208,25 @@ python scripts/bench_step.py --backend blocked --fit-backend python \
 
 See `scripts/README.md` for more options and `docs/BENCHMARKING_GUIDE.md` for details.
 
+## Data quality improvements
+
+**Canonical poet prioritization** in visualizations:
+- Curated list of ~60 major poets (Dickinson, Yeats, Auden, Larkin, Heaney, etc.)
+- Hybrid selection: canonical poets shown with priority, then high-count poets
+- Visual distinction: canonical poets have darker color, larger markers, priority labeling
+
+**Missing metadata imputation** using multiple strategies:
+```bash
+python scripts/app/impute_missing_metadata.py --poems data/poems.parquet --embeddings data/embeddings.npy
+```
+
+Imputation strategies:
+1. **First-line matching**: Propagate known poets to duplicate poems (free)
+2. **Embedding similarity**: Match to poet centroids with confidence scores (free)
+3. **LLM batch API**: Optional Claude API for uncertain cases (~$0.25 per 1000 poems)
+
+See `docs/POET_SELECTION_AND_IMPUTATION.md` for details.
+
 ## Key docs
 
 - `docs/METHOD_NARRATIVE.md`: mathematical motivation, modeling story, and HPC framing
@@ -208,6 +235,7 @@ See `scripts/README.md` for more options and `docs/BENCHMARKING_GUIDE.md` for de
 - `docs/SCALAPACK_BACKEND.md`: ScaLAPACK implementation details
 - `docs/BENCHMARKING_GUIDE.md`: Benchmarking workflow and scripts
 - `docs/CORPUS_BUILDING.md`: source manifests, normalization, dedupe, and audit outputs
+- `docs/POET_SELECTION_AND_IMPUTATION.md`: Canonical poet prioritization and metadata imputation
 - `scripts/README.md`: Script organization and usage guide
 
 ## Repository structure
