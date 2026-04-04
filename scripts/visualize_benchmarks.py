@@ -156,6 +156,15 @@ def plot_python_vs_scalapack_by_size(df: pd.DataFrame, output_dir: Path, fmt: st
     ax1.grid(True, alpha=0.3)
     ax1.set_xscale("log")
     ax1.set_yscale("log")
+    # Add more x-axis ticks at actual data points
+    if not python_data.empty or not scalapack_best.empty:
+        all_m = set()
+        if not python_data.empty:
+            all_m.update(python_data["m_rated"].values)
+        if not scalapack_best.empty:
+            all_m.update(scalapack_best["m_rated"].values)
+        ax1.set_xticks(sorted(all_m))
+        ax1.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x):,}'))
 
     # Plot 2: Total time
     if not python_data.empty:
@@ -171,6 +180,15 @@ def plot_python_vs_scalapack_by_size(df: pd.DataFrame, output_dir: Path, fmt: st
     ax2.grid(True, alpha=0.3)
     ax2.set_xscale("log")
     ax2.set_yscale("log")
+    # Add more x-axis ticks at actual data points
+    if not python_data.empty or not scalapack_best.empty:
+        all_m = set()
+        if not python_data.empty:
+            all_m.update(python_data["m_rated"].values)
+        if not scalapack_best.empty:
+            all_m.update(scalapack_best["m_rated"].values)
+        ax2.set_xticks(sorted(all_m))
+        ax2.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x):,}'))
 
     plt.tight_layout()
     _save_figure(fig, output_dir / "performance_vs_size", fmt, dpi)
@@ -286,7 +304,7 @@ def plot_block_size_impact(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: in
 
 
 def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: int) -> None:
-    """Plot: Detailed time breakdown (fit, score, select)."""
+    """Plot: Detailed time breakdown (fit, score, select) with side-by-side comparison."""
     # Check if we have the required columns for detailed breakdown
     required_cols = ["fit_seconds", "score_seconds"]
     if not all(col in df.columns for col in required_cols):
@@ -297,10 +315,7 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
     has_select = "select_seconds" in df.columns
     has_optimize = "optimize_seconds" in df.columns
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
     # Build aggregation dict based on available columns
-    # Use mean for Python (single config per m), min for ScaLAPACK (best config)
     agg_dict_mean = {"fit_seconds": "mean", "score_seconds": "mean"}
     agg_dict_min = {"fit_seconds": "min", "score_seconds": "min"}
     if has_select:
@@ -310,84 +325,123 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
         agg_dict_mean["optimize_seconds"] = "mean"
         agg_dict_min["optimize_seconds"] = "min"
 
-    # Python breakdown
+    # Get data for both backends
     python_df = df[df["fit_backend"] == "python"]
+    scalapack_df = df[df["fit_backend"] == "native_reference"]
+
     if python_df.empty:
         print("No Python data for breakdown plot")
-        plt.close()
         return
 
     python_data = python_df.groupby("m_rated").agg(agg_dict_mean).reset_index()
 
-    if not python_data.empty:
-        ax = axes[0]
-        m_rated = python_data["m_rated"].values
-
-        # Stack bars based on available columns
-        bottom = np.zeros(len(m_rated))
-
-        if has_optimize and "optimize_seconds" in python_data.columns:
-            opt_times = python_data["optimize_seconds"].values
-            if np.any(opt_times > 0.01):  # Only show if non-negligible
-                ax.bar(range(len(m_rated)), opt_times, bottom=bottom, label="Optimize HP", alpha=0.8)
-                bottom += opt_times
-
-        ax.bar(range(len(m_rated)), python_data["fit_seconds"], bottom=bottom, label="Fit", alpha=0.8)
-        bottom += python_data["fit_seconds"].values
-
-        if "score_seconds" in python_data.columns:
-            ax.bar(range(len(m_rated)), python_data["score_seconds"], bottom=bottom, label="Score", alpha=0.8)
-            bottom += python_data["score_seconds"].values
-
-        if has_select and "select_seconds" in python_data.columns:
-            ax.bar(range(len(m_rated)), python_data["select_seconds"], bottom=bottom, label="Select", alpha=0.8)
-
-        ax.set_xticks(range(len(m_rated)))
-        ax.set_xticklabels([int(x) for x in m_rated])
-        ax.set_xlabel("Problem Size (m_rated)", fontsize=12)
-        ax.set_ylabel("Time (seconds)", fontsize=12)
-        ax.set_title("Python Time Breakdown", fontsize=14, fontweight="bold")
-        ax.legend()
-        ax.grid(True, alpha=0.3, axis="y")
-
-    # ScaLAPACK breakdown (use MIN to show best configuration)
-    scalapack_df = df[df["fit_backend"] == "native_reference"]
-    if scalapack_df.empty:
-        # Hide second subplot if no data
-        axes[1].set_visible(False)
-    else:
+    has_scalapack = False
+    if not scalapack_df.empty:
         scalapack_data = scalapack_df.groupby("m_rated").agg(agg_dict_min).reset_index()
+        has_scalapack = True
 
-        if not scalapack_data.empty:
-            ax = axes[1]
-            m_rated = scalapack_data["m_rated"].values
+    # Get all problem sizes
+    m_rated_values = sorted(python_data["m_rated"].unique())
+    n_sizes = len(m_rated_values)
 
-            # Stack bars based on available columns
-            bottom = np.zeros(len(m_rated))
+    # Create figure with single plot
+    fig, ax = plt.subplots(1, 1, figsize=(max(10, n_sizes * 1.5), 6))
 
-            if has_optimize and "optimize_seconds" in scalapack_data.columns:
-                opt_times = scalapack_data["optimize_seconds"].values
-                if np.any(opt_times > 0.01):  # Only show if non-negligible
-                    ax.bar(range(len(m_rated)), opt_times, bottom=bottom, label="Optimize HP", alpha=0.8)
-                    bottom += opt_times
+    # Bar width and positions
+    bar_width = 0.35
+    x_pos = np.arange(n_sizes)
 
-            ax.bar(range(len(m_rated)), scalapack_data["fit_seconds"], bottom=bottom, label="Fit", alpha=0.8)
-            bottom += scalapack_data["fit_seconds"].values
+    # Define colors for each component
+    colors = {
+        'optimize': '#ff9999',
+        'fit': '#66b3ff',
+        'score': '#99ff99',
+        'select': '#ffcc99'
+    }
 
-            if "score_seconds" in scalapack_data.columns:
-                ax.bar(range(len(m_rated)), scalapack_data["score_seconds"], bottom=bottom, label="Score", alpha=0.8)
-                bottom += scalapack_data["score_seconds"].values
+    # Plot Python bars (left side of each group)
+    python_bottom = np.zeros(n_sizes)
 
-            if has_select and "select_seconds" in scalapack_data.columns:
-                ax.bar(range(len(m_rated)), scalapack_data["select_seconds"], bottom=bottom, label="Select", alpha=0.8)
+    # Extract Python data aligned with m_rated_values
+    python_dict = {row['m_rated']: row for _, row in python_data.iterrows()}
 
-            ax.set_xticks(range(len(m_rated)))
-            ax.set_xticklabels([int(x) for x in m_rated])
-            ax.set_xlabel("Problem Size (m_rated)", fontsize=12)
-            ax.set_ylabel("Time (seconds)", fontsize=12)
-            ax.set_title("ScaLAPACK Time Breakdown (Best Config)", fontsize=14, fontweight="bold")
-            ax.legend()
-            ax.grid(True, alpha=0.3, axis="y")
+    # Optimize time
+    if has_optimize:
+        opt_times = np.array([python_dict.get(m, {}).get('optimize_seconds', 0) for m in m_rated_values])
+        if np.any(opt_times > 0.01):
+            ax.bar(x_pos - bar_width/2, opt_times, bar_width, bottom=python_bottom,
+                   label='Optimize HP', alpha=0.8, color=colors['optimize'])
+            python_bottom += opt_times
+
+    # Fit time
+    fit_times = np.array([python_dict.get(m, {}).get('fit_seconds', 0) for m in m_rated_values])
+    ax.bar(x_pos - bar_width/2, fit_times, bar_width, bottom=python_bottom,
+           label='Fit', alpha=0.8, color=colors['fit'])
+    python_bottom += fit_times
+
+    # Score time
+    score_times = np.array([python_dict.get(m, {}).get('score_seconds', 0) for m in m_rated_values])
+    ax.bar(x_pos - bar_width/2, score_times, bar_width, bottom=python_bottom,
+           label='Score', alpha=0.8, color=colors['score'])
+    python_bottom += score_times
+
+    # Select time
+    if has_select:
+        select_times = np.array([python_dict.get(m, {}).get('select_seconds', 0) for m in m_rated_values])
+        ax.bar(x_pos - bar_width/2, select_times, bar_width, bottom=python_bottom,
+               label='Select', alpha=0.8, color=colors['select'])
+
+    # Plot ScaLAPACK bars (right side of each group) if available
+    if has_scalapack:
+        scalapack_bottom = np.zeros(n_sizes)
+        scalapack_dict = {row['m_rated']: row for _, row in scalapack_data.iterrows()}
+
+        # Optimize time
+        if has_optimize:
+            opt_times = np.array([scalapack_dict.get(m, {}).get('optimize_seconds', 0) for m in m_rated_values])
+            if np.any(opt_times > 0.01):
+                ax.bar(x_pos + bar_width/2, opt_times, bar_width, bottom=scalapack_bottom,
+                       alpha=0.8, color=colors['optimize'])
+                scalapack_bottom += opt_times
+
+        # Fit time
+        fit_times = np.array([scalapack_dict.get(m, {}).get('fit_seconds', 0) for m in m_rated_values])
+        ax.bar(x_pos + bar_width/2, fit_times, bar_width, bottom=scalapack_bottom,
+               alpha=0.8, color=colors['fit'])
+        scalapack_bottom += fit_times
+
+        # Score time
+        score_times = np.array([scalapack_dict.get(m, {}).get('score_seconds', 0) for m in m_rated_values])
+        ax.bar(x_pos + bar_width/2, score_times, bar_width, bottom=scalapack_bottom,
+               alpha=0.8, color=colors['score'])
+        scalapack_bottom += score_times
+
+        # Select time
+        if has_select:
+            select_times = np.array([scalapack_dict.get(m, {}).get('select_seconds', 0) for m in m_rated_values])
+            ax.bar(x_pos + bar_width/2, select_times, bar_width, bottom=scalapack_bottom,
+                   alpha=0.8, color=colors['select'])
+
+    # Formatting
+    ax.set_xlabel("Problem Size (m_rated)", fontsize=12)
+    ax.set_ylabel("Time (seconds)", fontsize=12)
+
+    title = "Time Breakdown: Python vs ScaLAPACK (Best)" if has_scalapack else "Time Breakdown: Python"
+    ax.set_title(title, fontsize=14, fontweight="bold")
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([f'{int(m):,}' for m in m_rated_values])
+
+    # Add legend (only showing component types, not backends)
+    ax.legend(loc='upper left')
+
+    # Add text labels to distinguish backends
+    if has_scalapack:
+        ax.text(0.02, 0.98, 'Left: Python  |  Right: ScaLAPACK',
+                transform=ax.transAxes, fontsize=10, verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    ax.grid(True, alpha=0.3, axis='y')
 
     plt.tight_layout()
     _save_figure(fig, output_dir / "time_breakdown", fmt, dpi)
