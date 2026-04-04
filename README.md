@@ -61,6 +61,27 @@ source .venv/bin/activate
 pip install -r requirements-llm.txt
 ```
 
+Optional GPU acceleration for scoring (requires CUDA-capable GPU):
+
+```bash
+source .venv/bin/activate
+
+# Check CUDA version first
+nvidia-smi
+
+# Install CuPy for your CUDA version
+# For CUDA 11.x:
+pip install cupy-cuda11x
+
+# For CUDA 12.x:
+pip install cupy-cuda12x
+
+# Or use conda:
+conda install -c conda-forge cupy
+```
+
+See `requirements-gpu.txt` for details. GPU scoring provides 10-100× speedup for large m (rated points > 5000).
+
 ## Canonical corpus build path
 
 The corpus foundation is now controlled by a manifest:
@@ -204,6 +225,20 @@ sbatch scripts/large_scale_bench.slurm
 python scripts/visualize_benchmarks.py results/large_scale_*.csv
 ```
 
+**GPU scoring benchmark** (requires CUDA GPU and CuPy):
+
+```bash
+# On GPU node
+sbatch scripts/gpu_scoring_bench.slurm
+
+# Or run directly with Python
+python scripts/bench_scoring.py \
+  --m-rated 100 500 1000 2000 5000 10000 \
+  --n-candidates 25000 \
+  --cpu-threads 8 \
+  --output-csv results/gpu_scoring.csv
+```
+
 **Custom benchmark:**
 
 ```bash
@@ -307,12 +342,16 @@ src/poetry_gp/
   backends/
     blocked.py                # Vectorized blocked backend
     scalapack_fit.py          # ScaLAPACK native backend
+    gpu_scoring.py            # GPU scoring with CuPy (optional)
+    scoring.py                # Daemon scoring utilities
 
 scripts/
   bench_step.py               # Core benchmark script
+  bench_scoring.py            # GPU vs CPU scoring benchmark
   visualize_benchmarks.py     # Visualization tool
   quick_bench_test.slurm      # Quick benchmark (m=100-2000)
   large_scale_bench.slurm     # Large-scale benchmark (m=1000-10000)
+  gpu_scoring_bench.slurm     # GPU scoring benchmark
   bootstrap_venv.sh           # Environment setup
   app/                        # Application scripts (corpus, queries, CLI)
   debug/                      # Debug and test scripts
@@ -336,6 +375,12 @@ scripts/
   - **Note:** Daemon has high overhead (file I/O + MPI) for small m, typical CLI use
   - Graceful fallback to Python when MPI unavailable
   - **Analytic gradients** for hyperparameter optimization (2-5× faster)
+- **GPU-accelerated scoring with CuPy (optional)**
+  - CUDA-based posterior prediction for massive speedup with large m
+  - RBF kernel, GEMV, and triangular solve on GPU
+  - 10-100× faster than single-threaded CPU for m > 5000
+  - Automatic CPU↔GPU data transfer and memory management
+  - Graceful fallback when GPU/CuPy unavailable
   - Optimal for benchmarking with m > 5000, Python better for small m
 - Manifest-driven multi-source corpus building
 - Text normalization and duplicate auditing
@@ -348,7 +393,6 @@ scripts/
 **In progress / Next steps:**
 
 - Large-scale benchmarks to find ScaLAPACK crossover point (m > 5000-10000)
-- Persistent daemon to eliminate subprocess overhead (~160ms per call)
-- GPU backend for kernel assembly and scoring
+- GPU backend for kernel assembly (fitting phase)
 - Enhanced Streamlit UI with richer search controls
-- Distributed scoring across large candidate sets
+- Distributed scoring across large candidate sets for recommendation at scale

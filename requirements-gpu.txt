@@ -1,0 +1,17 @@
+# GPU acceleration for scoring (optional)
+# Install CuPy matching your CUDA version:
+#
+# CUDA 11.x:
+#   pip install cupy-cuda11x
+#
+# CUDA 12.x:
+#   pip install cupy-cuda12x
+#
+# Or use conda:
+#   conda install -c conda-forge cupy
+#
+# Check your CUDA version with: nvidia-smi
+
+# Placeholder - install appropriate cupy package for your CUDA version
+# cupy-cuda11x>=12.0
+# cupy-cuda12x>=12.0
