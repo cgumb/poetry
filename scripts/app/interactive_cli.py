@@ -42,9 +42,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--noise", type=float, default=1e-3)
     parser.add_argument("--optimize-hyperparameters", action="store_true")
     parser.add_argument("--optimizer-maxiter", type=int, default=50)
-    parser.add_argument("--score-backend", type=str, default="auto",
+    parser.add_argument("--score-backend", type=str, default="python",
                         choices=["python", "daemon", "auto"],
-                        help="Scoring backend: python (serial), daemon (parallel), auto (try daemon, fall back to python)")
+                        help="Scoring backend (default: python). Daemon only beneficial for m > 5000+, has high overhead for typical CLI usage.")
     parser.add_argument("--daemon-nprocs", type=int, default=4,
                         help="Number of MPI processes for daemon scoring")
     parser.add_argument("--daemon-launcher", type=str, default="mpirun",
