@@ -220,13 +220,23 @@ See `scripts/README.md` for more options and `docs/BENCHMARKING_GUIDE.md` for de
 
 **Missing metadata imputation** using multiple strategies:
 ```bash
-python scripts/app/impute_missing_metadata.py --poems data/poems.parquet --embeddings data/embeddings.npy
+# First-line matching (recommended, always safe)
+python scripts/app/impute_missing_metadata.py --poems data/poems.parquet --output data/poems_imputed.parquet
+
+# Generate LLM batch requests for remaining unknowns
+python scripts/app/impute_missing_metadata.py \
+  --poems data/poems_imputed.parquet \
+  --generate-llm-batch data/llm_batch_requests.jsonl
 ```
 
 Imputation strategies:
-1. **First-line matching**: Propagate known poets to duplicate poems (free)
-2. **Embedding similarity**: Match to poet centroids with confidence scores (free)
-3. **LLM batch API**: Optional Claude API for uncertain cases (~$0.25 per 1000 poems)
+1. **First-line matching**: Propagate known poets to duplicate poems (free, robust)
+2. **LLM batch API**: Claude identifies well-known poems (~$0.003 per 1000 poems with batch pricing)
+
+**Key safeguards**:
+- ✅ Never re-imputes already-imputed rows
+- ✅ Only generates LLM requests for rows still needing imputation
+- ✅ Boolean flags track imputation status
 
 See `docs/POET_SELECTION_AND_IMPUTATION.md` for details.
 

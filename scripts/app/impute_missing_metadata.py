@@ -23,10 +23,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poems", type=Path, default=Path("data/poems.parquet"))
     parser.add_argument("--embeddings", type=Path, default=Path("data/embeddings.npy"))
     parser.add_argument("--output", type=Path, default=Path("data/poems_imputed.parquet"))
+    parser.add_argument("--use-similarity", action="store_true",
+                       help="Enable embedding similarity imputation (disabled by default)")
     parser.add_argument("--similarity-threshold", type=float, default=0.95,
                        help="Cosine similarity threshold for confident poet inference")
     parser.add_argument("--min-known-poems", type=int, default=5,
                        help="Minimum known poems by a poet to use for inference")
+    parser.add_argument("--generate-llm-batch", type=Path, default=None,
+                       help="Generate LLM batch API request file at this path")
+    parser.add_argument("--max-llm-requests", type=int, default=None,
+                       help="Maximum number of LLM requests to generate (for cost control)")
     parser.add_argument("--dry-run", action="store_true",
                        help="Show what would be imputed without writing output")
     return parser.parse_args()
@@ -49,6 +55,14 @@ def is_missing_title(value: object) -> bool:
     normalized = " ".join(str(value).strip().lower().split())
     bad_values = {"", "untitled", "[untitled]", "none", "n/a", "null", "poem"}
     return normalized in bad_values
+
+
+def was_already_imputed(df: pd.DataFrame, idx: int, field: str) -> bool:
+    """Check if a specific field was already imputed in a previous run."""
+    imputed_col = f"{field}_imputed"
+    if imputed_col not in df.columns:
+        return False
+    return bool(df.loc[idx, imputed_col])
 
 
 def compute_poet_centroids(
@@ -166,32 +180,67 @@ def generate_llm_batch_input(
     poems: pd.DataFrame,
     output_path: Path,
     max_poems: int | None = None
-) -> None:
+) -> int:
     """
     Generate JSONL file for Claude batch API to identify poets and titles.
+    Only includes rows that (1) need imputation and (2) haven't been imputed yet.
 
     Format: https://docs.anthropic.com/en/docs/build-with-claude/message-batching
+
+    Returns: Number of requests generated
     """
-    missing_mask = poems["poet"].map(is_missing_poet) | poems["title"].map(is_missing_title)
-    candidates = poems[missing_mask].copy()
+    # Check which rows need imputation
+    needs_poet = poems["poet"].map(is_missing_poet)
+    needs_title = poems["title"].map(is_missing_title)
+
+    # Exclude rows that were already imputed in a previous run
+    if "poet_imputed" in poems.columns:
+        already_imputed_poet = poems["poet_imputed"].fillna(False)
+        needs_poet = needs_poet & ~already_imputed_poet
+
+    if "title_imputed" in poems.columns:
+        already_imputed_title = poems["title_imputed"].fillna(False)
+        needs_title = needs_title & ~already_imputed_title
+
+    # Only include rows where at least one field needs imputation
+    needs_imputation = needs_poet | needs_title
+    candidates = poems[needs_imputation].copy()
+
+    if len(candidates) == 0:
+        print("No poems need LLM imputation (all already imputed or complete).")
+        return 0
 
     if max_poems is not None:
         candidates = candidates.head(max_poems)
+        if len(candidates) < len(poems[needs_imputation]):
+            print(f"Limiting to first {max_poems} of {len(poems[needs_imputation])} candidates (cost control)")
 
     requests = []
     for idx, row in candidates.iterrows():
         text_preview = str(row["text"])[:1000] if "text" in row else ""
+        needs_poet_flag = needs_poet.loc[idx]
+        needs_title_flag = needs_title.loc[idx]
 
-        prompt = f"""Given this poem excerpt, identify the poet and title if recognizable.
+        # Customize prompt based on what's needed
+        if needs_poet_flag and needs_title_flag:
+            task = "identify the poet and title"
+            response_example = '{"poet": "Poet Name", "title": "Poem Title", "confidence": "high|medium|low"}'
+        elif needs_poet_flag:
+            task = "identify the poet"
+            response_example = '{"poet": "Poet Name", "confidence": "high|medium|low"}'
+        else:
+            task = "identify the title"
+            response_example = '{"title": "Poem Title", "confidence": "high|medium|low"}'
+
+        prompt = f"""Given this poem excerpt, {task} if recognizable.
 
 Poem excerpt:
 {text_preview}
 
 If you can confidently identify this poem, respond with JSON:
-{{"poet": "Poet Name", "title": "Poem Title", "confidence": "high|medium|low"}}
+{response_example}
 
-If unrecognizable or anonymous/traditional, respond:
-{{"poet": null, "title": null, "confidence": "low"}}
+If unrecognizable or anonymous/traditional, respond with null values and low confidence.
 
 Respond only with valid JSON, no other text."""
 
@@ -210,18 +259,33 @@ Respond only with valid JSON, no other text."""
         for req in requests:
             f.write(json.dumps(req) + "\n")
 
-    print(f"Generated {len(requests)} batch API requests in {output_path}")
-    print(f"Estimated cost: ~${len(requests) * 0.00025:.2f} (at $0.25 per 1M input tokens)")
+    # More accurate cost estimate (tokens vary by poem length, ~150-200 per request)
+    estimated_input_tokens = len(requests) * 175
+    estimated_cost = (estimated_input_tokens / 1_000_000) * 0.25  # $0.25 per 1M input tokens
+    estimated_output_tokens = len(requests) * 50
+    estimated_cost += (estimated_output_tokens / 1_000_000) * 1.25  # $1.25 per 1M output tokens
+
+    print(f"\n✓ Generated {len(requests)} batch API requests in {output_path}")
+    print(f"  Estimated cost: ~${estimated_cost:.3f}")
+    print(f"  (Based on ~{estimated_input_tokens:,} input + ~{estimated_output_tokens:,} output tokens)")
+    print(f"\n  Submit with: anthropic messages batches create --input-file {output_path}")
+    print(f"  See: https://docs.anthropic.com/en/docs/build-with-claude/message-batching")
+
+    return len(requests)
 
 
 def main() -> None:
     args = parse_args()
 
     poems = pd.read_parquet(args.poems)
-    embeddings = np.load(args.embeddings, mmap_mode="r")
 
-    if len(poems) != embeddings.shape[0]:
-        raise ValueError("Poem and embedding row counts do not match")
+    # Only load embeddings if similarity is requested
+    if args.use_similarity:
+        embeddings = np.load(args.embeddings, mmap_mode="r")
+        if len(poems) != embeddings.shape[0]:
+            raise ValueError("Poem and embedding row counts do not match")
+    else:
+        embeddings = None
 
     # Ensure required columns exist
     if "text" not in poems.columns:
@@ -231,68 +295,130 @@ def main() -> None:
     if "title" not in poems.columns:
         poems["title"] = None
 
+    # Initialize imputation tracking columns if they don't exist
+    if "poet_imputed" not in poems.columns:
+        poems["poet_imputed"] = False
+    if "title_imputed" not in poems.columns:
+        poems["title_imputed"] = False
+    if "poet_imputation_confidence" not in poems.columns:
+        poems["poet_imputation_confidence"] = 0.0
+
     print(f"Total poems: {len(poems)}")
-    missing_poets = poems["poet"].map(is_missing_poet).sum()
-    missing_titles = poems["title"].map(is_missing_title).sum()
-    print(f"Missing poets: {missing_poets} ({100*missing_poets/len(poems):.1f}%)")
-    print(f"Missing titles: {missing_titles} ({100*missing_titles/len(poems):.1f}%)")
+
+    # Calculate missing counts excluding already-imputed rows
+    missing_poets = poems["poet"].map(is_missing_poet) & ~poems["poet_imputed"]
+    missing_titles = poems["title"].map(is_missing_title) & ~poems["title_imputed"]
+    already_imputed_poets = poems["poet_imputed"].sum()
+    already_imputed_titles = poems["title_imputed"].sum()
+
+    print(f"Missing poets: {missing_poets.sum()} ({100*missing_poets.sum()/len(poems):.1f}%)")
+    if already_imputed_poets > 0:
+        print(f"  (Already imputed: {already_imputed_poets})")
+    print(f"Missing titles: {missing_titles.sum()} ({100*missing_titles.sum()/len(poems):.1f}%)")
+    if already_imputed_titles > 0:
+        print(f"  (Already imputed: {already_imputed_titles})")
+
+    # If user just wants to generate LLM batch file, do that and exit
+    if args.generate_llm_batch is not None:
+        print("\n=== Generating LLM Batch API Request File ===")
+        n_requests = generate_llm_batch_input(poems, args.generate_llm_batch, args.max_llm_requests)
+        if n_requests > 0:
+            print(f"\n✓ Ready to submit {n_requests} requests to Claude Batch API")
+            print(f"  This will only impute rows that haven't been imputed yet.")
+        return
 
     # Strategy 1: First-line matching
     print("\n=== Strategy 1: First-line matching ===")
     first_line_groups = find_first_line_duplicates(poems)
     print(f"Found {len(first_line_groups)} duplicate first-line groups")
+
+    # Only impute if not already imputed
     imputed_by_first_line = impute_from_first_line_matches(poems, first_line_groups)
-    n_first_line = (imputed_by_first_line != poems["poet"]).sum()
-    print(f"Imputed {n_first_line} poets via first-line matching")
+    newly_imputed_first_line = 0
+    for idx in poems.index:
+        if not poems.loc[idx, "poet_imputed"] and imputed_by_first_line.iloc[idx] != poems.loc[idx, "poet"]:
+            newly_imputed_first_line += 1
+    print(f"Imputed {newly_imputed_first_line} poets via first-line matching")
 
-    # Strategy 2: Embedding similarity
-    print("\n=== Strategy 2: Embedding similarity ===")
-    poet_names, centroids = compute_poet_centroids(poems, embeddings, args.min_known_poems)
-    print(f"Computed centroids for {len(poet_names)} poets with ≥{args.min_known_poems} poems")
+    # Strategy 2: Embedding similarity (optional)
+    imputed_poets = imputed_by_first_line.copy()
+    confidence = poems["poet_imputation_confidence"].copy()
 
-    poems_with_first_line = poems.copy()
-    poems_with_first_line["poet"] = imputed_by_first_line
+    if args.use_similarity:
+        if embeddings is None:
+            raise ValueError("--use-similarity requires embeddings to be loaded")
 
-    imputed_poets, confidence = impute_poets_by_similarity(
-        poems_with_first_line, embeddings, poet_names, centroids, args.similarity_threshold
-    )
-    n_similarity = ((imputed_poets != poems_with_first_line["poet"]) & (confidence > 0)).sum()
-    print(f"Imputed {n_similarity} poets via embedding similarity (threshold={args.similarity_threshold})")
+        print("\n=== Strategy 2: Embedding similarity ===")
+        poet_names, centroids = compute_poet_centroids(poems, embeddings, args.min_known_poems)
+        print(f"Computed centroids for {len(poet_names)} poets with ≥{args.min_known_poems} poems")
+
+        poems_with_first_line = poems.copy()
+        poems_with_first_line["poet"] = imputed_by_first_line
+
+        imputed_poets, confidence = impute_poets_by_similarity(
+            poems_with_first_line, embeddings, poet_names, centroids, args.similarity_threshold
+        )
+
+        # Only count new imputations (not already imputed)
+        newly_imputed_similarity = 0
+        for idx in poems.index:
+            if not poems.loc[idx, "poet_imputed"] and imputed_poets.iloc[idx] != poems_with_first_line.loc[idx, "poet"] and confidence.iloc[idx] > 0:
+                newly_imputed_similarity += 1
+        print(f"Imputed {newly_imputed_similarity} poets via embedding similarity (threshold={args.similarity_threshold})")
+    else:
+        print("\n=== Strategy 2: Embedding similarity (SKIPPED) ===")
+        print("Use --use-similarity to enable this strategy (not recommended)")
 
     # Statistics
-    still_missing = imputed_poets.map(is_missing_poet).sum()
-    total_imputed = missing_poets - still_missing
+    still_missing_mask = imputed_poets.map(is_missing_poet) & ~poems["poet_imputed"]
+    still_missing = still_missing_mask.sum()
+    total_imputed_this_run = missing_poets.sum() - still_missing
+
     print(f"\n=== Summary ===")
-    print(f"Originally missing: {missing_poets}")
-    print(f"Imputed: {total_imputed} ({100*total_imputed/missing_poets:.1f}% of missing)")
+    print(f"Originally missing (not already imputed): {missing_poets.sum()}")
+    print(f"Newly imputed this run: {total_imputed_this_run} ({100*total_imputed_this_run/max(missing_poets.sum(), 1):.1f}% of missing)")
     print(f"Still missing: {still_missing} ({100*still_missing/len(poems):.1f}% of total)")
 
     if still_missing > 0:
         print(f"\n=== Strategy 3: LLM Batch API (optional) ===")
         batch_file = args.output.parent / "llm_batch_requests.jsonl"
         print(f"For remaining {still_missing} poems, consider LLM batch processing.")
-        print(f"Generate batch file with: --generate-llm-batch {batch_file}")
+        print(f"Generate batch file with:")
+        print(f"  python {Path(__file__).name} --poems {args.poems} --generate-llm-batch {batch_file}")
+        if args.max_llm_requests:
+            print(f"  (Use --max-llm-requests {args.max_llm_requests} to limit cost)")
 
     if not args.dry_run:
         output_poems = poems.copy()
 
-        # Track which rows were imputed
+        # Track which rows were newly imputed this run
         poet_was_missing = poems["poet"].map(is_missing_poet)
-        poet_is_imputed = (imputed_poets != poems["poet"]) & poet_was_missing
+        poet_newly_imputed = (imputed_poets != poems["poet"]) & poet_was_missing & ~poems["poet_imputed"]
 
-        output_poems["poet"] = imputed_poets
-        output_poems["poet_imputed"] = poet_is_imputed
-        output_poems["poet_imputation_confidence"] = confidence
+        # Update poet values only for newly imputed rows (preserve existing)
+        for idx in output_poems.index:
+            if poet_newly_imputed.iloc[idx]:
+                output_poems.loc[idx, "poet"] = imputed_poets.iloc[idx]
+                output_poems.loc[idx, "poet_imputed"] = True
+                output_poems.loc[idx, "poet_imputation_confidence"] = confidence.iloc[idx]
 
-        # Also add title_imputed column for future use (not yet implemented)
-        output_poems["title_imputed"] = False
+        # Ensure columns exist (preserve existing if already present)
+        if "poet_imputed" not in output_poems.columns:
+            output_poems["poet_imputed"] = False
+        if "title_imputed" not in output_poems.columns:
+            output_poems["title_imputed"] = False
+        if "poet_imputation_confidence" not in output_poems.columns:
+            output_poems["poet_imputation_confidence"] = 0.0
 
         output_poems.to_parquet(args.output, index=False)
-        print(f"\nWrote imputed poems to {args.output}")
-        print(f"  poet_imputed=True: {poet_is_imputed.sum()} rows")
-        print(f"  poet_imputation_confidence > 0: {(confidence > 0).sum()} rows")
+        print(f"\n✓ Wrote imputed poems to {args.output}")
+        print(f"  poet_imputed=True (total): {output_poems['poet_imputed'].sum()} rows")
+        print(f"  Newly imputed this run: {poet_newly_imputed.sum()} rows")
+        if (confidence > 0).sum() > 0:
+            print(f"  poet_imputation_confidence > 0: {(confidence > 0).sum()} rows")
     else:
-        print("\nDry run - no output written")
+        print("\n[DRY RUN] - No output written")
+        print(f"Would newly impute {poet_newly_imputed.sum()} poets")
 
 
 if __name__ == "__main__":

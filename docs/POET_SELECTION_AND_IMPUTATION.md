@@ -112,7 +112,9 @@ This reduces:
 
 **Limitations**: Only works for poems with known duplicates in corpus
 
-### Strategy 2: Embedding Similarity
+### Strategy 2: Embedding Similarity (OPTIONAL, NOT RECOMMENDED)
+
+**Status**: Available but **disabled by default** due to robustness concerns.
 
 **Approach**: Compute poet centroids from known poems, match unknown poems to nearest centroid.
 
@@ -135,9 +137,13 @@ Unknown poem with style similar to Emily Dickinson's known works
 **Cost**: Free (uses existing embeddings)
 
 **Limitations**:
+- **Questionable robustness**: Poet style is complex and multidimensional
+- Average embeddings may not capture poet-specific characteristics well
 - Only works for poets with sufficient known poems
-- Only works for poems stylistically similar to known work
 - High threshold needed to avoid false positives
+- Can incorrectly attribute poems in similar styles
+
+**To enable**: Add `--use-similarity` flag (use with caution)
 
 ### Strategy 3: LLM Batch API (Optional)
 
@@ -175,27 +181,47 @@ And Immortality.
 
 ### Usage
 
-**Basic imputation** (first-line + embedding similarity):
+**Recommended workflow** (first-line matching only):
+```bash
+# Step 1: Run first-line matching imputation
+python scripts/app/impute_missing_metadata.py \
+  --poems data/poems.parquet \
+  --output data/poems_imputed.parquet
+
+# Step 2: Generate LLM batch file for remaining unknowns
+python scripts/app/impute_missing_metadata.py \
+  --poems data/poems_imputed.parquet \
+  --generate-llm-batch data/llm_batch_requests.jsonl \
+  --max-llm-requests 1000  # Optional: limit for cost control
+
+# Step 3: Submit to Claude Batch API
+# See: https://docs.anthropic.com/en/docs/build-with-claude/message-batching
+anthropic messages batches create --input-file data/llm_batch_requests.jsonl
+
+# Step 4: After batch completes, parse results and update poems
+# (Manual step - parse the returned JSONL and update the dataframe)
+```
+
+**Dry run** (see what would be imputed without writing):
+```bash
+python scripts/app/impute_missing_metadata.py --poems data/poems.parquet --dry-run
+```
+
+**With embedding similarity** (not recommended, use at own risk):
 ```bash
 python scripts/app/impute_missing_metadata.py \
   --poems data/poems.parquet \
   --embeddings data/embeddings.npy \
   --output data/poems_imputed.parquet \
-  --similarity-threshold 0.95 \
-  --min-known-poems 5
+  --use-similarity \
+  --similarity-threshold 0.95
 ```
 
-**Dry run** (see what would be imputed):
-```bash
-python scripts/app/impute_missing_metadata.py --dry-run
-```
-
-**Generate LLM batch file** (for remaining uncertain cases):
-```bash
-# After running imputation, edit script to add --generate-llm-batch flag
-# Then submit generated JSONL to Claude batch API
-# See: https://docs.anthropic.com/en/docs/build-with-claude/message-batching
-```
+**Key safeguards**:
+- ✅ **Never re-imputes** rows where `poet_imputed=True`
+- ✅ **Only generates LLM requests** for rows still needing imputation
+- ✅ **Cost control** via `--max-llm-requests` flag
+- ✅ **Preserves existing data** when run multiple times
 
 ### Expected Results
 
