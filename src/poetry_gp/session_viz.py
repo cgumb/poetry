@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .backends.blocked import BlockedStepResult, run_blocked_step
+from .canonical_poets import is_canonical
 from .heatmap import smooth_scalar_field
 
 TEXT_CANDIDATES = ["text", "poem", "content", "body"]
@@ -119,22 +120,75 @@ def _draw_poet_overlay(
     topn: int,
     label_topn: int,
 ) -> None:
+    """Draw poet overlay with hybrid selection: canonical poets prioritized, then by poem count."""
     if poets is None or poet_coords is None or len(poets) == 0:
         return
-    if "n_poems" in poets.columns:
-        order = np.argsort(-poets["n_poems"].to_numpy(), kind="stable")
+
+    # Hybrid selection: prioritize canonical poets, then high-count poets
+    poets_work = poets.copy()
+    poets_work["is_canonical"] = poets_work["poet"].map(is_canonical)
+
+    # Split into canonical and non-canonical
+    canonical_mask = poets_work["is_canonical"].to_numpy()
+    canonical_indices = np.flatnonzero(canonical_mask)
+    non_canonical_indices = np.flatnonzero(~canonical_mask)
+
+    # Sort both groups by poem count (descending)
+    if "n_poems" in poets_work.columns:
+        n_poems = poets_work["n_poems"].to_numpy()
+        canonical_order = canonical_indices[np.argsort(-n_poems[canonical_indices], kind="stable")]
+        non_canonical_order = non_canonical_indices[np.argsort(-n_poems[non_canonical_indices], kind="stable")]
     else:
-        order = np.arange(len(poets))
+        canonical_order = canonical_indices
+        non_canonical_order = non_canonical_indices
+
+    # Take all canonical poets (up to topn), then fill with high-count non-canonical
+    order = np.concatenate([canonical_order, non_canonical_order])
     order = order[: min(topn, len(order))]
+
     poets_sub = poets.iloc[order].reset_index(drop=True)
     coords_sub = poet_coords[order]
+
+    # Mark which are canonical for sizing
+    is_canonical_selected = np.array([is_canonical(p) for p in poets_sub["poet"]])
+
     if "n_poems" in poets_sub.columns:
         sizes = 20 + 8 * np.sqrt(poets_sub["n_poems"].to_numpy())
+        # Boost size for canonical poets
+        sizes = np.where(is_canonical_selected, sizes * 1.3, sizes)
     else:
-        sizes = np.full(len(poets_sub), 30.0)
-    ax.scatter(coords_sub[:, 0], coords_sub[:, 1], s=sizes, alpha=0.5, marker="^")
-    for i in range(min(label_topn, len(poets_sub))):
-        ax.text(coords_sub[i, 0], coords_sub[i, 1], str(poets_sub.iloc[i]["poet"]), fontsize=8)
+        sizes = np.where(is_canonical_selected, 40.0, 30.0)
+
+    # Less prominent poet markers to reduce clutter
+    # Use different colors for canonical vs non-canonical
+    colors = np.where(is_canonical_selected, "darkviolet", "purple")
+    alphas = np.where(is_canonical_selected, 0.4, 0.2)
+
+    for i, (color, alpha, size) in enumerate(zip(colors, alphas, sizes)):
+        ax.scatter(
+            coords_sub[i, 0], coords_sub[i, 1],
+            s=size, alpha=alpha, marker="^",
+            c=color, edgecolors="none"
+        )
+
+    # Label canonical poets first, then fill with high-count poets
+    n_canonical_to_label = min(sum(is_canonical_selected), label_topn)
+    canonical_label_indices = np.flatnonzero(is_canonical_selected)[:n_canonical_to_label]
+    remaining_labels = label_topn - len(canonical_label_indices)
+
+    label_indices = set(canonical_label_indices)
+    if remaining_labels > 0:
+        non_canonical_label_indices = np.flatnonzero(~is_canonical_selected)[:remaining_labels]
+        label_indices.update(non_canonical_label_indices)
+
+    for i in sorted(label_indices):
+        style_weight = "normal" if is_canonical_selected[i] else "italic"
+        ax.text(
+            coords_sub[i, 0], coords_sub[i, 1],
+            str(poets_sub.iloc[i]["poet"]),
+            fontsize=7, alpha=0.7 if is_canonical_selected[i] else 0.5,
+            style=style_weight
+        )
 
 
 def render_projection_heatmap(
@@ -156,23 +210,48 @@ def render_projection_heatmap(
 ) -> None:
     hm = smooth_scalar_field(coords_2d, values, grid_size=grid_size, bandwidth=bandwidth)
     fig, ax = plt.subplots(figsize=(10, 8))
+
+    # Choose colormap: diverging for mean (around 0), sequential for variance
+    is_variance_plot = "variance" in title.lower()
+    cmap = "YlOrRd" if is_variance_plot else "RdBu_r"
+
     im = ax.imshow(
         hm["zz"],
         extent=[hm["xs"][0], hm["xs"][-1], hm["ys"][0], hm["ys"][-1]],
         origin="lower",
         aspect="auto",
-        alpha=0.8,
+        alpha=0.7,
+        cmap=cmap,
     )
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    ax.scatter(coords_2d[:, 0], coords_2d[:, 1], s=4, alpha=0.15)
 
+    # Lighter background scatter to reduce clutter
+    ax.scatter(coords_2d[:, 0], coords_2d[:, 1], s=2, alpha=0.08, c="gray")
+
+    # Plot key points with distinct colors and markers
     if rated_indices:
         rated = np.asarray(rated_indices, dtype=np.int64)
-        ax.scatter(coords_2d[rated, 0], coords_2d[rated, 1], s=28, alpha=0.9, label="rated")
+        ax.scatter(
+            coords_2d[rated, 0], coords_2d[rated, 1],
+            s=40, alpha=0.85, c="black", marker="o",
+            edgecolors="white", linewidths=0.5, label="rated"
+        )
     if current_index is not None and 0 <= current_index < len(coords_2d):
-        ax.scatter(coords_2d[current_index, 0], coords_2d[current_index, 1], s=90, marker="x", linewidths=1.5, label="current")
-    ax.scatter(coords_2d[exploit_index, 0], coords_2d[exploit_index, 1], s=140, marker="*", label="exploit")
-    ax.scatter(coords_2d[explore_index, 0], coords_2d[explore_index, 1], s=90, marker="s", label="explore")
+        ax.scatter(
+            coords_2d[current_index, 0], coords_2d[current_index, 1],
+            s=120, c="cyan", marker="X", edgecolors="black",
+            linewidths=1.2, alpha=0.95, label="current"
+        )
+    ax.scatter(
+        coords_2d[exploit_index, 0], coords_2d[exploit_index, 1],
+        s=180, c="lime", marker="*", edgecolors="darkgreen",
+        linewidths=1.5, alpha=0.95, label="exploit"
+    )
+    ax.scatter(
+        coords_2d[explore_index, 0], coords_2d[explore_index, 1],
+        s=120, c="gold", marker="s", edgecolors="darkorange",
+        linewidths=1.5, alpha=0.95, label="explore"
+    )
 
     _draw_poet_overlay(ax, poets, poet_coords, topn=poet_topn, label_topn=poet_label_topn)
 
@@ -207,7 +286,7 @@ def render_session_gp_outputs(
     grid_size: int = 150,
     bandwidth: float = 0.15,
     poet_topn: int = 80,
-    poet_label_topn: int = 20,
+    poet_label_topn: int = 10,
 ) -> SessionVizResult:
     _validate_shapes(poems, embeddings, coords_2d)
     if not rated_indices:

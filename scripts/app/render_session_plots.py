@@ -11,6 +11,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from poetry_gp.backends.blocked import run_blocked_step
+from poetry_gp.canonical_poets import is_canonical
 from poetry_gp.heatmap import smooth_scalar_field
 
 TITLE_CANDIDATES = ["title", "poem_title", "name"]
@@ -131,34 +132,114 @@ def _label_indices(coords: np.ndarray, max_labels: int) -> list[int]:
 
 
 def _draw_poet_overlay(ax: plt.Axes, poets: pd.DataFrame | None, poet_coords: np.ndarray | None, *, topn: int, label_topn: int) -> None:
+    """Draw poet overlay with hybrid selection: canonical poets prioritized, then by poem count."""
     if poets is None or poet_coords is None or len(poets) == 0:
         return
-    order = np.argsort(-poets["n_poems"].to_numpy(), kind="stable") if "n_poems" in poets.columns else np.arange(len(poets))
+
+    # Hybrid selection: prioritize canonical poets, then high-count poets
+    poets_work = poets.copy()
+    poets_work["is_canonical"] = poets_work["poet"].map(is_canonical)
+
+    # Split into canonical and non-canonical
+    canonical_mask = poets_work["is_canonical"].to_numpy()
+    canonical_indices = np.flatnonzero(canonical_mask)
+    non_canonical_indices = np.flatnonzero(~canonical_mask)
+
+    # Sort both groups by poem count (descending)
+    if "n_poems" in poets_work.columns:
+        n_poems = poets_work["n_poems"].to_numpy()
+        canonical_order = canonical_indices[np.argsort(-n_poems[canonical_indices], kind="stable")]
+        non_canonical_order = non_canonical_indices[np.argsort(-n_poems[non_canonical_indices], kind="stable")]
+    else:
+        canonical_order = canonical_indices
+        non_canonical_order = non_canonical_indices
+
+    # Take all canonical poets (up to topn), then fill with high-count non-canonical
+    order = np.concatenate([canonical_order, non_canonical_order])
     order = order[: min(topn, len(order))]
+
     poets_sub = poets.iloc[order].reset_index(drop=True)
     coords_sub = np.asarray(poet_coords[order])
-    sizes = 15 + 4 * np.sqrt(poets_sub["n_poems"].to_numpy()) if "n_poems" in poets_sub.columns else np.full(len(poets_sub), 25.0)
-    ax.scatter(coords_sub[:, 0], coords_sub[:, 1], s=sizes, alpha=0.35, marker="^")
-    for i in _label_indices(coords_sub, label_topn):
-        ax.text(coords_sub[i, 0], coords_sub[i, 1], str(poets_sub.iloc[i]["poet"]), fontsize=8)
+
+    # Mark which are canonical for sizing
+    is_canonical_selected = np.array([is_canonical(p) for p in poets_sub["poet"]])
+
+    if "n_poems" in poets_sub.columns:
+        sizes = 20 + 8 * np.sqrt(poets_sub["n_poems"].to_numpy())
+        # Boost size for canonical poets
+        sizes = np.where(is_canonical_selected, sizes * 1.3, sizes)
+    else:
+        sizes = np.where(is_canonical_selected, 40.0, 30.0)
+
+    # Less prominent poet markers to reduce clutter
+    # Use different colors for canonical vs non-canonical
+    colors = np.where(is_canonical_selected, "darkviolet", "purple")
+    alphas = np.where(is_canonical_selected, 0.4, 0.2)
+
+    for i, (color, alpha, size) in enumerate(zip(colors, alphas, sizes)):
+        ax.scatter(
+            coords_sub[i, 0], coords_sub[i, 1],
+            s=size, alpha=alpha, marker="^",
+            c=color, edgecolors="none"
+        )
+
+    # Label canonical poets first, then use spatial diversity for remaining labels
+    n_canonical_in_selection = sum(is_canonical_selected)
+    n_canonical_to_label = min(n_canonical_in_selection, label_topn)
+    canonical_label_indices = np.flatnonzero(is_canonical_selected)[:n_canonical_to_label]
+    remaining_labels = label_topn - len(canonical_label_indices)
+
+    label_indices_set = set(canonical_label_indices)
+    if remaining_labels > 0:
+        non_canonical_coords = coords_sub[~is_canonical_selected]
+        spatially_diverse = _label_indices(non_canonical_coords, remaining_labels)
+        non_canonical_global_indices = np.flatnonzero(~is_canonical_selected)
+        label_indices_set.update(non_canonical_global_indices[spatially_diverse])
+
+    for i in sorted(label_indices_set):
+        style_weight = "normal" if is_canonical_selected[i] else "italic"
+        ax.text(
+            coords_sub[i, 0], coords_sub[i, 1],
+            str(poets_sub.iloc[i]["poet"]),
+            fontsize=7, alpha=0.7 if is_canonical_selected[i] else 0.5,
+            style=style_weight
+        )
 
 
 def _annotate_special_points(ax: plt.Axes, coords_2d: np.ndarray, score_df: pd.DataFrame) -> None:
+    """Annotate special points with consistent styling matching session_viz.py"""
     rated = score_df.loc[score_df["is_rated"], "row_index"].to_numpy(dtype=np.int64)
     current = score_df.loc[score_df["is_current"], "row_index"].to_numpy(dtype=np.int64)
     exploit = score_df.loc[score_df["is_exploit"], "row_index"].to_numpy(dtype=np.int64)
     explore = score_df.loc[score_df["is_explore"], "row_index"].to_numpy(dtype=np.int64)
+
     if len(rated):
-        ax.scatter(coords_2d[rated, 0], coords_2d[rated, 1], s=22, alpha=0.9, label="rated")
+        ax.scatter(
+            coords_2d[rated, 0], coords_2d[rated, 1],
+            s=40, alpha=0.85, c="black", marker="o",
+            edgecolors="white", linewidths=0.5, label="rated"
+        )
     if len(current):
         i = int(current[0])
-        ax.scatter(coords_2d[i, 0], coords_2d[i, 1], s=90, marker="x", linewidths=1.5, label="current")
+        ax.scatter(
+            coords_2d[i, 0], coords_2d[i, 1],
+            s=120, c="cyan", marker="X", edgecolors="black",
+            linewidths=1.2, alpha=0.95, label="current"
+        )
     if len(exploit):
         i = int(exploit[0])
-        ax.scatter(coords_2d[i, 0], coords_2d[i, 1], s=140, marker="*", label="exploit")
+        ax.scatter(
+            coords_2d[i, 0], coords_2d[i, 1],
+            s=180, c="lime", marker="*", edgecolors="darkgreen",
+            linewidths=1.5, alpha=0.95, label="exploit"
+        )
     if len(explore):
         i = int(explore[0])
-        ax.scatter(coords_2d[i, 0], coords_2d[i, 1], s=90, marker="s", label="explore")
+        ax.scatter(
+            coords_2d[i, 0], coords_2d[i, 1],
+            s=120, c="gold", marker="s", edgecolors="darkorange",
+            linewidths=1.5, alpha=0.95, label="explore"
+        )
 
 
 def _finalize_plot(fig: plt.Figure, ax: plt.Axes, output_path: Path, *, title: str) -> None:
@@ -195,15 +276,24 @@ def _render_smooth(coords_2d: np.ndarray, values: np.ndarray, score_df: pd.DataF
         grid_block_size=grid_block_size,
     )
     fig, ax = plt.subplots(figsize=(10, 8))
+
+    # Choose colormap: diverging for mean (around 0), sequential for variance
+    is_variance_plot = "variance" in title.lower()
+    cmap = "YlOrRd" if is_variance_plot else "RdBu_r"
+
     im = ax.imshow(
         hm["zz"],
         extent=[hm["xs"][0], hm["xs"][-1], hm["ys"][0], hm["ys"][-1]],
         origin="lower",
         aspect="auto",
-        alpha=0.85,
+        alpha=0.7,
+        cmap=cmap,
     )
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    ax.scatter(coords_2d[:, 0], coords_2d[:, 1], s=3, alpha=0.10)
+
+    # Lighter background scatter to reduce clutter
+    ax.scatter(coords_2d[:, 0], coords_2d[:, 1], s=2, alpha=0.08, c="gray")
+
     _annotate_special_points(ax, coords_2d, score_df)
     _draw_poet_overlay(ax, poets, poet_coords, topn=poet_topn, label_topn=poet_label_topn)
     _finalize_plot(fig, ax, output_path, title=title)
@@ -211,7 +301,16 @@ def _render_smooth(coords_2d: np.ndarray, values: np.ndarray, score_df: pd.DataF
 
 def _render_hexbin(coords_2d: np.ndarray, values: np.ndarray, score_df: pd.DataFrame, output_path: Path, *, title: str, poets: pd.DataFrame | None, poet_coords: np.ndarray | None, poet_topn: int, poet_label_topn: int) -> None:
     fig, ax = plt.subplots(figsize=(10, 8))
-    hb = ax.hexbin(coords_2d[:, 0], coords_2d[:, 1], C=values, reduce_C_function=np.mean, gridsize=60, mincnt=1)
+
+    # Choose colormap: diverging for mean (around 0), sequential for variance
+    is_variance_plot = "variance" in title.lower()
+    cmap = "YlOrRd" if is_variance_plot else "RdBu_r"
+
+    hb = ax.hexbin(
+        coords_2d[:, 0], coords_2d[:, 1],
+        C=values, reduce_C_function=np.mean,
+        gridsize=60, mincnt=1, cmap=cmap, alpha=0.8
+    )
     fig.colorbar(hb, ax=ax, fraction=0.046, pad=0.04)
     _annotate_special_points(ax, coords_2d, score_df)
     _draw_poet_overlay(ax, poets, poet_coords, topn=poet_topn, label_topn=poet_label_topn)
@@ -220,7 +319,12 @@ def _render_hexbin(coords_2d: np.ndarray, values: np.ndarray, score_df: pd.DataF
 
 def _render_scatter(coords_2d: np.ndarray, values: np.ndarray, score_df: pd.DataFrame, output_path: Path, *, title: str, poets: pd.DataFrame | None, poet_coords: np.ndarray | None, poet_topn: int, poet_label_topn: int) -> None:
     fig, ax = plt.subplots(figsize=(10, 8))
-    im = ax.scatter(coords_2d[:, 0], coords_2d[:, 1], c=values, s=6, alpha=0.45)
+
+    # Choose colormap: diverging for mean (around 0), sequential for variance
+    is_variance_plot = "variance" in title.lower()
+    cmap = "YlOrRd" if is_variance_plot else "RdBu_r"
+
+    im = ax.scatter(coords_2d[:, 0], coords_2d[:, 1], c=values, s=6, alpha=0.45, cmap=cmap)
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     _annotate_special_points(ax, coords_2d, score_df)
     _draw_poet_overlay(ax, poets, poet_coords, topn=poet_topn, label_topn=poet_label_topn)
@@ -270,8 +374,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-size", type=int, default=2048)
     parser.add_argument("--grid-size", type=int, default=120)
     parser.add_argument("--bandwidth", type=float, default=0.10)
-    parser.add_argument("--poet-topn", type=int, default=40)
-    parser.add_argument("--poet-label-topn", type=int, default=12)
+    parser.add_argument("--poet-topn", type=int, default=80)
+    parser.add_argument("--poet-label-topn", type=int, default=10)
     parser.add_argument("--plot-style", choices=["smooth", "hexbin", "scatter"], default="hexbin")
     parser.add_argument("--max-smooth-points", type=int, default=5000)
     parser.add_argument("--grid-block-size", type=int, default=4096)
