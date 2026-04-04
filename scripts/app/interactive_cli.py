@@ -327,97 +327,97 @@ def main() -> None:
 
     try:
         while True:
-        console.print()
-        show_poem(poems, current_idx, title_col, poet_col, text_col)
-        console.print(help_panel)
-        cmd = Prompt.ask("Choose action", default="").strip().lower()
+            console.print()
+            show_poem(poems, current_idx, title_col, poet_col, text_col)
+            console.print(help_panel)
+            cmd = Prompt.ask("Choose action", default="").strip().lower()
 
-        if cmd == "q":
-            save_session(session_file, current_idx, rated_indices, ratings)
-            console.print(f"[green]✓[/green] Saved session to [bold]{session_file}[/bold]")
-            break
-
-        if cmd in {"l", "n", "d"}:
-            if current_idx not in rated_indices:
-                rated_indices.append(current_idx)
-                rating_value = {"l": 1.0, "n": 0.0, "d": -1.0}[cmd]
-                ratings.append(rating_value)
+            if cmd == "q":
                 save_session(session_file, current_idx, rated_indices, ratings)
+                console.print(f"[green]✓[/green] Saved session to [bold]{session_file}[/bold]")
+                break
 
-                # Color-coded feedback
-                if rating_value > 0:
-                    console.print(f"[green]✓ Recorded rating {rating_value:+.1f} for poem {current_idx}[/green]")
-                elif rating_value < 0:
-                    console.print(f"[red]✓ Recorded rating {rating_value:+.1f} for poem {current_idx}[/red]")
+            if cmd in {"l", "n", "d"}:
+                if current_idx not in rated_indices:
+                    rated_indices.append(current_idx)
+                    rating_value = {"l": 1.0, "n": 0.0, "d": -1.0}[cmd]
+                    ratings.append(rating_value)
+                    save_session(session_file, current_idx, rated_indices, ratings)
+
+                    # Color-coded feedback
+                    if rating_value > 0:
+                        console.print(f"[green]✓ Recorded rating {rating_value:+.1f} for poem {current_idx}[/green]")
+                    elif rating_value < 0:
+                        console.print(f"[red]✓ Recorded rating {rating_value:+.1f} for poem {current_idx}[/red]")
+                    else:
+                        console.print(f"[yellow]✓ Recorded rating {rating_value:+.1f} for poem {current_idx}[/yellow]")
                 else:
-                    console.print(f"[yellow]✓ Recorded rating {rating_value:+.1f} for poem {current_idx}[/yellow]")
-            else:
-                console.print("[dim]Poem already rated.[/dim]")
-            continue
+                    console.print("[dim]Poem already rated.[/dim]")
+                continue
 
-        if cmd == "r":
-            print_rated_summary(poems, rated_indices, ratings, title_col, poet_col)
-            continue
+            if cmd == "r":
+                print_rated_summary(poems, rated_indices, ratings, title_col, poet_col)
+                continue
 
-        if cmd == "s":
-            selected = prompt_search(poems, title_col, poet_col, text_col)
-            if selected is not None:
-                current_idx = selected
-                save_session(session_file, current_idx, rated_indices, ratings)
-            continue
+            if cmd == "s":
+                selected = prompt_search(poems, title_col, poet_col, text_col)
+                if selected is not None:
+                    current_idx = selected
+                    save_session(session_file, current_idx, rated_indices, ratings)
+                continue
 
-        if cmd not in {"e", "x"}:
-            console.print("[red]Unknown command.[/red]")
-            continue
+            if cmd not in {"e", "x"}:
+                console.print("[red]Unknown command.[/red]")
+                continue
 
-        if not rated_indices:
-            console.print("[yellow]Rate at least one poem first.[/yellow]")
-            continue
-        # Show progress indicator
-        with console.status("[bold cyan]Computing GP posterior...", spinner="dots"):
-            result = run_blocked_step(
-                embeddings,
-                np.array(rated_indices, dtype=np.int64),
-                np.array(ratings, dtype=np.float64),
-                length_scale=current_length_scale,
-                variance=current_variance,
-                noise=current_noise,
-                optimize_hyperparameters=args.optimize_hyperparameters,
-                optimizer_maxiter=args.optimizer_maxiter,
-                score_backend=args.score_backend,
-                daemon_client=daemon_client,
-                daemon_nprocs=args.daemon_nprocs,
-                daemon_launcher=args.daemon_launcher,
-            )
+            if not rated_indices:
+                console.print("[yellow]Rate at least one poem first.[/yellow]")
+                continue
+            # Show progress indicator
+            with console.status("[bold cyan]Computing GP posterior...", spinner="dots"):
+                result = run_blocked_step(
+                    embeddings,
+                    np.array(rated_indices, dtype=np.int64),
+                    np.array(ratings, dtype=np.float64),
+                    length_scale=current_length_scale,
+                    variance=current_variance,
+                    noise=current_noise,
+                    optimize_hyperparameters=args.optimize_hyperparameters,
+                    optimizer_maxiter=args.optimizer_maxiter,
+                    score_backend=args.score_backend,
+                    daemon_client=daemon_client,
+                    daemon_nprocs=args.daemon_nprocs,
+                    daemon_launcher=args.daemon_launcher,
+                )
 
-        if args.optimize_hyperparameters:
-            current_length_scale = float(result.state.length_scale)
-            current_variance = float(result.state.variance)
-            current_noise = float(result.state.noise)
-        current_idx = result.exploit_index if cmd == "e" else result.explore_index
-        save_session(session_file, current_idx, rated_indices, ratings)
+            if args.optimize_hyperparameters:
+                current_length_scale = float(result.state.length_scale)
+                current_variance = float(result.state.variance)
+                current_noise = float(result.state.noise)
+            current_idx = result.exploit_index if cmd == "e" else result.explore_index
+            save_session(session_file, current_idx, rated_indices, ratings)
 
-        # Create timing and parameter info panels
-        timing_table = Table(show_header=False, box=None, padding=(0, 1))
-        timing_table.add_column("Metric", style="cyan")
-        timing_table.add_column("Value", style="green", justify="right")
-        timing_table.add_row("Fit", f"{result.profile.fit_seconds:.4f}s")
-        timing_table.add_row("Optimize", f"{result.profile.optimize_seconds:.4f}s")
-        timing_table.add_row("Score", f"{result.profile.score_seconds:.4f}s")
-        timing_table.add_row("Total", f"{result.profile.total_seconds:.4f}s")
+            # Create timing and parameter info panels
+            timing_table = Table(show_header=False, box=None, padding=(0, 1))
+            timing_table.add_column("Metric", style="cyan")
+            timing_table.add_column("Value", style="green", justify="right")
+            timing_table.add_row("Fit", f"{result.profile.fit_seconds:.4f}s")
+            timing_table.add_row("Optimize", f"{result.profile.optimize_seconds:.4f}s")
+            timing_table.add_row("Score", f"{result.profile.score_seconds:.4f}s")
+            timing_table.add_row("Total", f"{result.profile.total_seconds:.4f}s")
 
-        param_table = Table(show_header=False, box=None, padding=(0, 1))
-        param_table.add_column("Parameter", style="cyan")
-        param_table.add_column("Value", style="yellow", justify="right")
-        param_table.add_row("Length scale", f"{result.state.length_scale:.4g}")
-        param_table.add_row("Variance", f"{result.state.variance:.4g}")
-        param_table.add_row("Noise", f"{result.state.noise:.4g}")
-        if result.state.log_marginal_likelihood is not None:
-            param_table.add_row("Log marginal ℒ", f"{result.state.log_marginal_likelihood:.6f}")
+            param_table = Table(show_header=False, box=None, padding=(0, 1))
+            param_table.add_column("Parameter", style="cyan")
+            param_table.add_column("Value", style="yellow", justify="right")
+            param_table.add_row("Length scale", f"{result.state.length_scale:.4g}")
+            param_table.add_row("Variance", f"{result.state.variance:.4g}")
+            param_table.add_row("Noise", f"{result.state.noise:.4g}")
+            if result.state.log_marginal_likelihood is not None:
+                param_table.add_row("Log marginal ℒ", f"{result.state.log_marginal_likelihood:.6f}")
 
-        console.print()
-        console.print(Panel(timing_table, title="⏱️  Timing", border_style="green", box=box.ROUNDED))
-        console.print(Panel(param_table, title="⚙️  Kernel Parameters", border_style="yellow", box=box.ROUNDED))
+            console.print()
+            console.print(Panel(timing_table, title="⏱️  Timing", border_style="green", box=box.ROUNDED))
+            console.print(Panel(param_table, title="⚙️  Kernel Parameters", border_style="yellow", box=box.ROUNDED))
 
     finally:
         # Clean up daemon on exit
