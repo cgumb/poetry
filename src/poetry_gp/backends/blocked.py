@@ -44,6 +44,7 @@ def run_blocked_step(
     optimizer_maxiter: int = 50,
     fit_backend: str = "python",
     score_backend: str = "python",  # "python", "daemon", "auto"
+    daemon_client: object | None = None,  # Reusable daemon client
     daemon_nprocs: int = 4,
     daemon_launcher: str = "mpirun",
     scalapack_launcher: str = "srun",
@@ -124,26 +125,41 @@ def run_blocked_step(
 
     elif score_backend == "daemon":
         # Daemon scoring (parallel) - fail if unavailable
-        daemon = try_create_daemon_client(nprocs=daemon_nprocs, launcher=daemon_launcher)
-        if daemon is None:
-            raise RuntimeError("Daemon scoring requested but daemon unavailable")
+        # If daemon_client was provided, reuse it; otherwise create one
+        daemon_to_shutdown = None
+        if daemon_client is None:
+            daemon = try_create_daemon_client(nprocs=daemon_nprocs, launcher=daemon_launcher)
+            if daemon is None:
+                raise RuntimeError("Daemon scoring requested but daemon unavailable")
+            daemon_to_shutdown = daemon
+        else:
+            daemon = daemon_client
+
         try:
             mean, variance_arr, score_seconds_inner = score_all_with_fallback(
                 state, embeddings, block_size, daemon_client=daemon
             )
         finally:
-            daemon.shutdown()
+            if daemon_to_shutdown is not None:
+                daemon_to_shutdown.shutdown()
 
     elif score_backend == "auto":
         # Try daemon, fall back to Python automatically
-        daemon = try_create_daemon_client(nprocs=daemon_nprocs, launcher=daemon_launcher, verbose=True)
+        # If daemon_client was provided, reuse it; otherwise create one
+        daemon_to_shutdown = None
+        if daemon_client is None:
+            daemon = try_create_daemon_client(nprocs=daemon_nprocs, launcher=daemon_launcher, verbose=True)
+            daemon_to_shutdown = daemon
+        else:
+            daemon = daemon_client
+
         try:
             mean, variance_arr, score_seconds_inner = score_all_with_fallback(
                 state, embeddings, block_size, daemon_client=daemon
             )
         finally:
-            if daemon is not None:
-                daemon.shutdown()
+            if daemon_to_shutdown is not None:
+                daemon_to_shutdown.shutdown()
 
     else:
         raise ValueError(f"Unknown score_backend: {score_backend}")

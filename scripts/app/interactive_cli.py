@@ -14,6 +14,7 @@ from rich.prompt import Prompt
 from rich import box
 
 from poetry_gp.backends.blocked import run_blocked_step
+from poetry_gp.backends.scoring import try_create_daemon_client
 
 console = Console()
 
@@ -292,6 +293,23 @@ def main() -> None:
     current_variance = float(args.variance)
     current_noise = float(args.noise)
 
+    # Initialize persistent daemon for scoring if needed
+    daemon_client = None
+    if args.score_backend in ("daemon", "auto"):
+        with console.status("[bold cyan]Starting scoring daemon...", spinner="dots"):
+            daemon_client = try_create_daemon_client(
+                nprocs=args.daemon_nprocs,
+                launcher=args.daemon_launcher,
+                verbose=True
+            )
+        if daemon_client is not None:
+            console.print(f"[green]✓[/green] Daemon started with {args.daemon_nprocs} processes")
+        elif args.score_backend == "daemon":
+            console.print("[red]✗[/red] Failed to start daemon (required for daemon mode)")
+            return
+        else:  # auto mode
+            console.print("[yellow]⚠[/yellow] Daemon unavailable, will use Python scoring")
+
     # Create help panel
     help_panel = Panel(
         "[green bold]l[/green bold]ike   [dim]|[/dim]   "
@@ -307,7 +325,8 @@ def main() -> None:
         box=box.ROUNDED
     )
 
-    while True:
+    try:
+        while True:
         console.print()
         show_poem(poems, current_idx, title_col, poet_col, text_col)
         console.print(help_panel)
@@ -366,6 +385,7 @@ def main() -> None:
                 optimize_hyperparameters=args.optimize_hyperparameters,
                 optimizer_maxiter=args.optimizer_maxiter,
                 score_backend=args.score_backend,
+                daemon_client=daemon_client,
                 daemon_nprocs=args.daemon_nprocs,
                 daemon_launcher=args.daemon_launcher,
             )
@@ -398,6 +418,13 @@ def main() -> None:
         console.print()
         console.print(Panel(timing_table, title="⏱️  Timing", border_style="green", box=box.ROUNDED))
         console.print(Panel(param_table, title="⚙️  Kernel Parameters", border_style="yellow", box=box.ROUNDED))
+
+    finally:
+        # Clean up daemon on exit
+        if daemon_client is not None:
+            console.print("[cyan]Shutting down daemon...[/cyan]")
+            daemon_client.shutdown()
+            console.print("[green]✓[/green] Daemon stopped")
 
 
 if __name__ == "__main__":
