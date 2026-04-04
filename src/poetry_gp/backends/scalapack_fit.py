@@ -295,7 +295,33 @@ def _run_prepared_fit(
             pieces.append(f"stderr={stderr}")
         raise RuntimeError(" | ".join(pieces))
 
-    meta = json.loads(prepared.output_meta_path.read_text())
+    # Read and parse metadata JSON with better error handling
+    if not prepared.output_meta_path.exists():
+        raise RuntimeError(
+            f"ScaLAPACK executable succeeded but did not create metadata file: {prepared.output_meta_path}\n"
+            f"stdout: {completed.stdout}\n"
+            f"stderr: {completed.stderr}"
+        )
+
+    meta_text = prepared.output_meta_path.read_text()
+    if not meta_text.strip():
+        raise RuntimeError(
+            f"ScaLAPACK executable created empty metadata file: {prepared.output_meta_path}\n"
+            f"stdout: {completed.stdout}\n"
+            f"stderr: {completed.stderr}"
+        )
+
+    try:
+        meta = json.loads(meta_text)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"Failed to parse ScaLAPACK metadata JSON: {e}\n"
+            f"File: {prepared.output_meta_path}\n"
+            f"Content: {meta_text[:500]}\n"
+            f"stdout: {completed.stdout}\n"
+            f"stderr: {completed.stderr}"
+        ) from e
+
     n = int(meta["n"])
     alpha = np.fromfile(prepared.alpha_bin_path, dtype=np.float64, count=n)
     chol = np.fromfile(prepared.chol_bin_path, dtype=np.float64, count=n * n).reshape(n, n)
