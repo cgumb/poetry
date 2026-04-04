@@ -9,6 +9,7 @@ import numpy as np
 from ..gp_exact import GPState, fit_exact_gp, predict_block
 from .scalapack_fit import fit_exact_gp_scalapack_from_rated
 from .scoring import score_all_with_fallback, try_create_daemon_client
+from .gpu_scoring import score_all_gpu, is_gpu_available
 
 
 @dataclass
@@ -160,6 +161,12 @@ def run_blocked_step(
         finally:
             if daemon_to_shutdown is not None:
                 daemon_to_shutdown.shutdown()
+
+    elif score_backend == "gpu":
+        # GPU scoring with CuPy
+        if not is_gpu_available():
+            raise RuntimeError("GPU scoring requested but GPU/CuPy not available")
+        mean, variance_arr, score_seconds_inner = score_all_gpu(state, embeddings, block_size)
 
     else:
         raise ValueError(f"Unknown score_backend: {score_backend}")
