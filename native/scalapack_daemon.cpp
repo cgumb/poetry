@@ -70,8 +70,6 @@ struct DaemonRequest {
     double length_scale;
     double variance;
     double noise;
-    int nprow;
-    int npcol;
     int block_size;
     std::string x_path;
     std::string y_path;
@@ -89,63 +87,108 @@ struct DaemonResponse {
 
 // Simple JSON parser (manual for minimal dependencies)
 bool parse_request_json(const std::string& json, DaemonRequest& req) {
-    // Very simple parser - expects exact format
+    // Very simple parser - handles spaces after colons
     // Real implementation would use a proper JSON library
 
-    // Find operation
-    size_t op_start = json.find("\"operation\":\"") + 13;
+    fprintf(stderr, "[Daemon] Parsing JSON: %s\n", json.substr(0, 200).c_str());
+
+    // Find operation - handle optional space after colon
+    size_t op_pos = json.find("\"operation\"");
+    if (op_pos == std::string::npos) {
+        fprintf(stderr, "[Daemon] Could not find 'operation' field\n");
+        return false;
+    }
+    size_t colon_pos = json.find(":", op_pos);
+    if (colon_pos == std::string::npos) return false;
+    size_t op_start = json.find("\"", colon_pos + 1);
+    if (op_start == std::string::npos) return false;
+    op_start++;  // Skip opening quote
     size_t op_end = json.find("\"", op_start);
-    if (op_start == std::string::npos || op_end == std::string::npos) return false;
+    if (op_end == std::string::npos) return false;
     req.operation = json.substr(op_start, op_end - op_start);
 
     if (req.operation == "shutdown") {
         return true;
     }
 
-    // Parse integers
+    // Parse integers - handle optional space after colon
     auto parse_int = [&](const char* key, int& val) {
-        std::string key_str = std::string("\"") + key + "\":";
+        std::string key_str = std::string("\"") + key + "\"";
         size_t pos = json.find(key_str);
         if (pos == std::string::npos) return false;
-        pos += key_str.length();
-        val = std::atoi(json.c_str() + pos);
+        size_t colon = json.find(":", pos);
+        if (colon == std::string::npos) return false;
+        val = std::atoi(json.c_str() + colon + 1);
         return true;
     };
 
-    // Parse doubles
+    // Parse doubles - handle optional space after colon
     auto parse_double = [&](const char* key, double& val) {
-        std::string key_str = std::string("\"") + key + "\":";
+        std::string key_str = std::string("\"") + key + "\"";
         size_t pos = json.find(key_str);
         if (pos == std::string::npos) return false;
-        pos += key_str.length();
-        val = std::atof(json.c_str() + pos);
+        size_t colon = json.find(":", pos);
+        if (colon == std::string::npos) return false;
+        val = std::atof(json.c_str() + colon + 1);
         return true;
     };
 
-    // Parse strings
+    // Parse strings - handle optional space after colon
     auto parse_string = [&](const char* key, std::string& val) {
-        std::string key_str = std::string("\"") + key + "\":\"";
-        size_t start = json.find(key_str);
+        std::string key_str = std::string("\"") + key + "\"";
+        size_t pos = json.find(key_str);
+        if (pos == std::string::npos) return false;
+        size_t colon = json.find(":", pos);
+        if (colon == std::string::npos) return false;
+        size_t start = json.find("\"", colon + 1);
         if (start == std::string::npos) return false;
-        start += key_str.length();
+        start++;  // Skip opening quote
         size_t end = json.find("\"", start);
         if (end == std::string::npos) return false;
         val = json.substr(start, end - start);
         return true;
     };
 
-    if (!parse_int("m", req.m)) return false;
-    if (!parse_int("d", req.d)) return false;
-    if (!parse_double("length_scale", req.length_scale)) return false;
-    if (!parse_double("variance", req.variance)) return false;
-    if (!parse_double("noise", req.noise)) return false;
-    if (!parse_int("nprow", req.nprow)) return false;
-    if (!parse_int("npcol", req.npcol)) return false;
-    if (!parse_int("block_size", req.block_size)) return false;
-    if (!parse_string("x_path", req.x_path)) return false;
-    if (!parse_string("y_path", req.y_path)) return false;
-    if (!parse_string("alpha_out_path", req.alpha_out_path)) return false;
-    if (!parse_string("L_out_path", req.L_out_path)) return false;
+    if (!parse_int("m", req.m)) {
+        fprintf(stderr, "[Daemon] Failed to parse 'm'\n");
+        return false;
+    }
+    if (!parse_int("d", req.d)) {
+        fprintf(stderr, "[Daemon] Failed to parse 'd'\n");
+        return false;
+    }
+    if (!parse_double("length_scale", req.length_scale)) {
+        fprintf(stderr, "[Daemon] Failed to parse 'length_scale'\n");
+        return false;
+    }
+    if (!parse_double("variance", req.variance)) {
+        fprintf(stderr, "[Daemon] Failed to parse 'variance'\n");
+        return false;
+    }
+    if (!parse_double("noise", req.noise)) {
+        fprintf(stderr, "[Daemon] Failed to parse 'noise'\n");
+        return false;
+    }
+    if (!parse_int("block_size", req.block_size)) {
+        fprintf(stderr, "[Daemon] Failed to parse 'block_size'\n");
+        return false;
+    }
+    if (!parse_string("x_path", req.x_path)) {
+        fprintf(stderr, "[Daemon] Failed to parse 'x_path'\n");
+        return false;
+    }
+    if (!parse_string("y_path", req.y_path)) {
+        fprintf(stderr, "[Daemon] Failed to parse 'y_path'\n");
+        return false;
+    }
+    if (!parse_string("alpha_out_path", req.alpha_out_path)) {
+        fprintf(stderr, "[Daemon] Failed to parse 'alpha_out_path'\n");
+        return false;
+    }
+    if (!parse_string("L_out_path", req.L_out_path)) {
+        fprintf(stderr, "[Daemon] Failed to parse 'L_out_path'\n");
+        return false;
+    }
 
     return true;
 }
@@ -300,8 +343,6 @@ int main(int argc, char** argv) {
             MPI_Bcast(&req.length_scale, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Bcast(&req.variance, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Bcast(&req.noise, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            MPI_Bcast(&req.nprow, 1, MPI_INT, 0, MPI_COMM_WORLD);
-            MPI_Bcast(&req.npcol, 1, MPI_INT, 0, MPI_COMM_WORLD);
             MPI_Bcast(&req.block_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
             // Load data (rank 0 only)
@@ -396,8 +437,6 @@ int main(int argc, char** argv) {
             MPI_Bcast(&req.length_scale, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Bcast(&req.variance, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Bcast(&req.noise, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            MPI_Bcast(&req.nprow, 1, MPI_INT, 0, MPI_COMM_WORLD);
-            MPI_Bcast(&req.npcol, 1, MPI_INT, 0, MPI_COMM_WORLD);
             MPI_Bcast(&req.block_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
             // Get rank/size

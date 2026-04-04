@@ -39,8 +39,6 @@ def test_single_fit():
             length_scale=1.0,
             variance=1.0,
             noise=0.001,
-            nprow=2,
-            npcol=2,
             block_size=64,
         )
         elapsed = time.time() - start
@@ -76,8 +74,6 @@ def test_multiple_fits():
                 length_scale=1.0,
                 variance=1.0,
                 noise=0.001,
-                nprow=2,
-                npcol=2,
                 block_size=64,
             )
             elapsed = time.time() - start
@@ -119,8 +115,6 @@ def test_different_problem_sizes():
                 length_scale=1.0,
                 variance=1.0,
                 noise=0.001,
-                nprow=2,
-                npcol=2,
                 block_size=64,
             )
             elapsed = time.time() - start

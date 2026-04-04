@@ -134,12 +134,13 @@ class ScaLAPACKDaemonClient:
         length_scale: float,
         variance: float,
         noise: float,
-        nprow: int,
-        npcol: int,
         block_size: int,
     ) -> dict[str, Any]:
         """
         Submit a fit request to the daemon.
+
+        Note: Process grid (nprow, npcol) is calculated automatically by the daemon
+        based on the number of MPI processes.
 
         Returns:
             dict with keys:
@@ -173,8 +174,6 @@ class ScaLAPACKDaemonClient:
             "length_scale": float(length_scale),
             "variance": float(variance),
             "noise": float(noise),
-            "nprow": int(nprow),
-            "npcol": int(npcol),
             "block_size": int(block_size),
             "x_path": str(x_path),
             "y_path": str(y_path),
