@@ -36,6 +36,10 @@ export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
+# Use home directory for temp files (compute nodes have limited /tmp)
+export TMPDIR="$HOME/tmp"
+mkdir -p "$TMPDIR"
+
 echo "Running test..."
 python -u scripts/debug/test_large_fit.py
 

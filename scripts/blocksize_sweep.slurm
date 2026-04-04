@@ -39,6 +39,10 @@ export MKL_NUM_THREADS=1
 export OMPI_MCA_hwloc_base_binding_policy=none
 export OMPI_MCA_rmaps_base_mapping_policy=slot
 
+# Use home directory for temp files (compute nodes have limited /tmp)
+export TMPDIR="$HOME/tmp"
+mkdir -p "$TMPDIR"
+
 # Build native code
 echo "Building native code..."
 cmake -S native -B native/build
