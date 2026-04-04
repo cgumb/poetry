@@ -71,15 +71,27 @@ if [[ $PREFER_GPU -eq 1 ]] || [[ $HAS_CONDA_ENV -eq 1 && $HAS_VENV -eq 0 ]]; the
 
   echo "Activating GPU environment..."
 
-  if [[ -f "$SPACK_SETUP" ]]; then
+  # Try user-space miniconda first
+  if [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]]; then
+    source "$HOME/miniconda3/etc/profile.d/conda.sh"
+  elif [[ -f "$SPACK_SETUP" ]]; then
+    # Fall back to spack mamba (if it works)
     source "$SPACK_SETUP"
-    spack env activate CS-2050-mamba
+    spack env activate CS-2050-mamba 2>/dev/null || true
+    # Try to initialize conda from spack
+    if command -v conda &> /dev/null; then
+      eval "$(conda shell.bash hook 2>/dev/null)" || true
+    fi
+  else
+    # Try system conda
+    if command -v conda &> /dev/null; then
+      eval "$(conda shell.bash hook)"
+    fi
   fi
 
-  eval "$(conda shell.bash hook)"
   conda activate poetry-gpu
 
-  echo "✓ GPU environment activated (mamba + conda)"
+  echo "✓ GPU environment activated (conda)"
   echo "  Python: $(which python)"
   echo "  CuPy available: $(python -c 'import cupy; print("YES")' 2>/dev/null || echo 'NO')"
 

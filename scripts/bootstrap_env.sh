@@ -66,15 +66,53 @@ if [[ $ENABLE_GPU -eq 1 ]]; then
     exit 1
   }
 
-  # Check mamba is available
-  if ! command -v mamba &> /dev/null; then
-    echo "ERROR: mamba not found after activating CS-2050-mamba"
-    echo "which python: $(which python)"
-    exit 1
+  # Check if mamba works (might fail due to CPU architecture mismatch)
+  MAMBA_WORKS=0
+  if command -v mamba &> /dev/null; then
+    if mamba --version &> /dev/null; then
+      MAMBA_WORKS=1
+      echo "Mamba found: $(which mamba)"
+      echo ""
+    else
+      echo "Warning: mamba found but crashes (likely CPU architecture mismatch)"
+      echo "Will install miniconda in user space instead..."
+      echo ""
+    fi
+  else
+    echo "Warning: mamba not found in CS-2050-mamba environment"
+    echo "Will install miniconda in user space instead..."
+    echo ""
   fi
 
-  echo "Mamba found: $(which mamba)"
-  echo ""
+  # Install miniconda if system mamba doesn't work
+  if [[ $MAMBA_WORKS -eq 0 ]]; then
+    MINICONDA_DIR="$HOME/miniconda3"
+
+    if [[ ! -f "$MINICONDA_DIR/bin/conda" ]]; then
+      echo "Installing Miniconda to $MINICONDA_DIR..."
+      echo "This is a one-time setup that will take a few minutes..."
+      echo ""
+
+      # Download miniconda installer
+      INSTALLER="$TMPDIR/miniconda.sh"
+      wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O "$INSTALLER"
+
+      # Install
+      bash "$INSTALLER" -b -p "$MINICONDA_DIR"
+      rm "$INSTALLER"
+
+      echo "Miniconda installed successfully"
+      echo ""
+    fi
+
+    # Initialize conda
+    source "$MINICONDA_DIR/etc/profile.d/conda.sh"
+
+    # Use conda instead of mamba for environment creation
+    CONDA_CMD="conda"
+  else
+    CONDA_CMD="mamba"
+  fi
 
   # Create conda environment
   ENV_NAME="poetry-gpu"
@@ -110,15 +148,15 @@ EOF
 EOF
   fi
 
-  echo "Creating conda environment '$ENV_NAME'..."
+  echo "Creating conda environment '$ENV_NAME' using $CONDA_CMD..."
   echo "This may take several minutes..."
   echo ""
 
   # Remove existing env if present
-  mamba env remove -n "$ENV_NAME" -y 2>/dev/null || true
+  $CONDA_CMD env remove -n "$ENV_NAME" -y 2>/dev/null || true
 
   # Create new environment
-  mamba env create -f "$ENV_FILE"
+  $CONDA_CMD env create -f "$ENV_FILE"
 
   # Activate the conda environment
   eval "$(conda shell.bash hook)"
