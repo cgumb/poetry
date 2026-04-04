@@ -166,20 +166,16 @@ Interactive CLI:
 python scripts/app/interactive_cli.py
 ```
 
-With optional parallel scoring (automatically falls back to Python if unavailable):
-
-```bash
-python scripts/app/interactive_cli.py --score-backend auto --daemon-nprocs 16
-```
+**Note:** Daemon scoring is **not recommended** for typical CLI usage. With small m (few rated poems) and large n_query (tens of thousands to score), Python scoring is ~10x faster due to daemon file I/O and MPI communication overhead. Daemon scoring is only beneficial for m > 5000+.
 
 The CLI features:
 - 🎨 **Rich terminal UI** with colors, panels, and tables
 - 👥 **Multi-user support** - multiple users can maintain separate rating sessions
 - 📊 **Exploit/explore recommendations** powered by Gaussian processes
-- ⚡ **Optional parallel scoring** - daemon-based MPI scoring with automatic fallback
 - 🔍 **Search** by title, poet, or text content
 - ⏱️ **Performance metrics** for each GP computation
 - 💾 **Session persistence** - resume where you left off
+- 🔧 **Hyperparameter optimization** via `--optimize-hyperparameters`
 
 Rich is included in `requirements-app.txt` and will be installed with:
 ```bash
@@ -336,10 +332,11 @@ scripts/
   - BLAS DGEMM optimization for 20-40× speedup
 - **Milestone 1C: Persistent daemon + parallel scoring**
   - Persistent MPI daemon eliminates ~160ms subprocess overhead
-  - Embarrassingly parallel scoring across 10k+ poems
+  - Embarrassingly parallel scoring (beneficial for moderate n_query with large m)
+  - **Note:** Daemon has high overhead (file I/O + MPI) for small m, typical CLI use
   - Graceful fallback to Python when MPI unavailable
   - **Analytic gradients** for hyperparameter optimization (2-5× faster)
-  - 8× reduction in overhead vs centralized scatter/gather
+  - Optimal for benchmarking with m > 5000, Python better for small m
 - Manifest-driven multi-source corpus building
 - Text normalization and duplicate auditing
 - Embedding and 2D projection pipeline
