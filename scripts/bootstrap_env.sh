@@ -98,9 +98,28 @@ if [[ $ENABLE_GPU -eq 1 ]]; then
       mkdir -p "$(dirname "$MICROMAMBA_BIN")"
       mkdir -p "$MICROMAMBA_ROOT"
 
-      # Download micromamba binary (single static executable)
-      curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | \
-        tar -xvj -C "$(dirname "$MICROMAMBA_BIN")" bin/micromamba
+      # Download micromamba binary directly
+      # Deactivate spack to use system tools only
+      if [[ -n "${SPACK_ENV:-}" ]]; then
+        spack env deactivate 2>/dev/null || true
+      fi
+
+      # Download tarball
+      TARBALL="$TMPDIR/micromamba.tar.bz2"
+      /usr/bin/curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest -o "$TARBALL"
+
+      # Extract with system tar
+      cd "$TMPDIR"
+      /bin/tar -xjf "$TARBALL"
+      mv bin/micromamba "$MICROMAMBA_BIN"
+      rm -rf bin "$TARBALL"
+      cd "$REPO_DIR"
+
+      # Reactivate spack if it was active
+      if [[ -f "$SPACK_SETUP" ]]; then
+        source "$SPACK_SETUP"
+        spack env activate CS-2050-mamba 2>/dev/null || true
+      fi
 
       echo "Micromamba installed successfully"
       echo ""
