@@ -45,7 +45,7 @@ source ~/161588/spack/share/spack/setup-env.sh
 spack env activate CS-2050
 bash scripts/bootstrap_venv.sh
 source .venv/bin/activate
-python scripts/check_env.py
+python scripts/app/check_env.py
 ```
 
 Optional app dependencies such as Streamlit can be installed with:
@@ -65,15 +65,15 @@ configs/poetry_sources.json
 To build the active corpus:
 
 ```bash
-python scripts/build_poetry_corpus.py
+python scripts/app/build_poetry_corpus.py
 ```
 
 Useful variants:
 
 ```bash
-python scripts/build_poetry_corpus.py --sources public_domain_poetry
-python scripts/build_poetry_corpus.py --per-source-limit 500
-python scripts/build_poetry_corpus.py --min-chars 80
+python scripts/app/build_poetry_corpus.py --sources public_domain_poetry
+python scripts/app/build_poetry_corpus.py --per-source-limit 500
+python scripts/app/build_poetry_corpus.py --min-chars 80
 ```
 
 This writes:
@@ -88,13 +88,13 @@ This writes:
 Build poem embeddings:
 
 ```bash
-python scripts/embed_poems.py --input data/poems.parquet --output data/embeddings.npy
+python scripts/app/embed_poems.py --input data/poems.parquet --output data/embeddings.npy
 ```
 
 Project poems to 2D with UMAP and save the fitted reducer:
 
 ```bash
-python scripts/project_poems_2d.py \
+python scripts/app/project_poems_2d.py \
   --input data/embeddings.npy \
   --output data/proj2d.npy \
   --reducer-output data/proj2d_reducer.pkl
@@ -110,26 +110,26 @@ The projection path now uses:
 If you want a faster-but-riskier run on a roomier machine, increase jobs manually:
 
 ```bash
-python scripts/project_poems_2d.py --n-jobs 2
+python scripts/app/project_poems_2d.py --n-jobs 2
 ```
 
 If you want more reproducible output instead of speed:
 
 ```bash
-python scripts/project_poems_2d.py --deterministic --seed 0
+python scripts/app/project_poems_2d.py --deterministic --seed 0
 ```
 
 You can also tune the pre-reduction size explicitly:
 
 ```bash
-python scripts/project_poems_2d.py --pre-reduce-dims 50
+python scripts/app/project_poems_2d.py --pre-reduce-dims 50
 ```
 
 Build poet centroids in embedding space and then project them with the **same** reducer:
 
 ```bash
-python scripts/build_poet_centroids.py --poems data/poems.parquet --embeddings data/embeddings.npy
-python scripts/project_poet_centroids_2d.py \
+python scripts/app/build_poet_centroids.py --poems data/poems.parquet --embeddings data/embeddings.npy
+python scripts/app/project_poet_centroids_2d.py \
   --input data/poet_centroids.npy \
   --output data/poet_centroids_2d.npy \
   --reducer data/proj2d_reducer.pkl
@@ -142,21 +142,21 @@ This shared-reducer path matters: poem points and poet centroids should live in 
 Phrase-to-poem search:
 
 ```bash
-python scripts/query_by_phrase.py --text "melancholy bells over evening water" --topk 10
-python scripts/query_by_phrase.py --text "winter grief and birds" --poet dickinson --topk 5
+python scripts/app/query_by_phrase.py --text "melancholy bells over evening water" --topk 10
+python scripts/app/query_by_phrase.py --text "winter grief and birds" --poet dickinson --topk 5
 ```
 
 Poem-to-poem similarity search:
 
 ```bash
-python scripts/query_by_poem.py --title "The Raven" --topk 10 --exclude-self
-python scripts/query_by_poem.py --poem-id 12345 --topk 10 --exclude-self
+python scripts/app/query_by_poem.py --title "The Raven" --topk 10 --exclude-self
+python scripts/app/query_by_poem.py --poem-id 12345 --topk 10 --exclude-self
 ```
 
 Interactive CLI:
 
 ```bash
-python scripts/interactive_cli.py
+python scripts/app/interactive_cli.py
 ```
 
 The CLI currently supports rating poems, exploit/explore recommendations, session persistence, search, and timing output for each GP step.
@@ -169,106 +169,108 @@ streamlit run app/streamlit_app.py
 
 ## Benchmarking
 
-One-off benchmark:
+**Quick test** (m=100-2000, 1-4 processes):
 
 ```bash
-python scripts/bench_step.py --backend naive --n-poems 5000 --m-rated 20
-python scripts/bench_step.py --backend blocked --n-poems 5000 --m-rated 20 --block-size 2048
+sbatch scripts/quick_bench_test.slurm
+python scripts/visualize_benchmarks.py results/quick_test_*.csv
 ```
 
-Serial sweep:
+**Large-scale test** (m=1000-10000, 1-16 processes):
 
 ```bash
-python scripts/bench_sweep.py --backends naive,blocked --n-poems 1000,2000,5000 --m-rated 5,10,20,40
-python scripts/plot_benchmarks_csv.py --input results/bench_results.csv --output results/bench_results.png
+sbatch scripts/large_scale_bench.slurm
+python scripts/visualize_benchmarks.py results/large_scale_*.csv
 ```
 
-MPI sweep:
+**Custom benchmark:**
 
 ```bash
-mpirun -n 4 python scripts/bench_mpi_step.py --n-poems 10000 --m-rated 20
-mpirun -n 4 python scripts/bench_mpi_sweep.py --n-poems 5000,10000,20000 --m-rated 5,10,20,40
-python scripts/plot_all_benchmarks.py \
-  --serial-input results/bench_results.csv \
-  --mpi-input results/mpi_bench_results.csv \
-  --output results/all_benchmarks.png
+python scripts/bench_step.py --backend blocked --fit-backend native_reference \
+  --n-poems 10000 --m-rated 2000 \
+  --scalapack-launcher mpirun --scalapack-nprocs 8 --scalapack-block-size 64
 ```
+
+**Python baseline:**
+
+```bash
+python scripts/bench_step.py --backend blocked --fit-backend python \
+  --n-poems 10000 --m-rated 2000
+```
+
+See `scripts/README.md` for more options and `docs/BENCHMARKING_GUIDE.md` for details.
 
 ## Key docs
 
-- `docs/CORPUS_BUILDING.md`: source manifests, normalization, dedupe, and audit outputs
 - `docs/METHOD_NARRATIVE.md`: mathematical motivation, modeling story, and HPC framing
-- `configs/poetry_sources.template.json`: richer template with example source shapes
+- `docs/NATIVE_HPC_ROADMAP.md`: HPC optimization roadmap and milestones
+- `docs/MILESTONE_1B_DESIGN.md`: Distributed kernel assembly design (Milestone 1B)
+- `docs/SCALAPACK_BACKEND.md`: ScaLAPACK implementation details
+- `docs/BENCHMARKING_GUIDE.md`: Benchmarking workflow and scripts
+- `docs/CORPUS_BUILDING.md`: source manifests, normalization, dedupe, and audit outputs
+- `scripts/README.md`: Script organization and usage guide
 
 ## Repository structure
 
 ```text
 configs/
-  poetry_sources.json
-  poetry_sources.template.json
+  poetry_sources.json          # Corpus source manifest
 
 docs/
-  CORPUS_BUILDING.md
-  METHOD_NARRATIVE.md
+  NATIVE_HPC_ROADMAP.md       # HPC optimization roadmap
+  MILESTONE_1B_DESIGN.md      # Distributed assembly design
+  SCALAPACK_BACKEND.md        # ScaLAPACK implementation
+  BENCHMARKING_GUIDE.md       # Benchmarking workflow
+  METHOD_NARRATIVE.md         # Mathematical motivation
+  CORPUS_BUILDING.md          # Corpus building guide
+
+native/
+  scalapack_gp_fit.cpp        # C++ ScaLAPACK GP solver
+  scalapack_gp_fit_entry.cpp  # Entry point with routing
+  CMakeLists.txt              # Build configuration
 
 src/poetry_gp/
-  data_utils.py
-  source_registry.py
-  corpus_builder.py
-  gp_exact.py
-  kernel.py
-  heatmap.py
-  profiling.py
-  reducer_2d.py
+  gp_exact.py                 # Exact GP implementation
+  kernel.py                   # RBF kernel
   backends/
-    naive.py
-    blocked.py
-    mpi.py
+    blocked.py                # Vectorized blocked backend
+    scalapack_fit.py          # ScaLAPACK native backend
 
 scripts/
-  build_poetry_corpus.py
-  inspect_hf_poetry_dataset.py
-  embed_poems.py
-  project_poems_2d.py
-  build_poet_centroids.py
-  project_poet_centroids_2d.py
-  query_by_phrase.py
-  query_by_poem.py
-  interactive_cli.py
-  bench_step.py
-  bench_sweep.py
-  bench_mpi_step.py
-  bench_mpi_sweep.py
-  plot_benchmarks.py
-  plot_benchmarks_csv.py
-  plot_all_benchmarks.py
-  plot_heatmap_demo.py
-  plot_poet_map.py
+  bench_step.py               # Core benchmark script
+  visualize_benchmarks.py     # Visualization tool
+  quick_bench_test.slurm      # Quick benchmark (m=100-2000)
+  large_scale_bench.slurm     # Large-scale benchmark (m=1000-10000)
+  bootstrap_venv.sh           # Environment setup
+  app/                        # Application scripts (corpus, queries, CLI)
+  debug/                      # Debug and test scripts
+  archive/                    # Old/superseded scripts
 ```
 
 ## Current state
 
-Implemented now:
+**Implemented:**
 
-- exact GP fitting via Cholesky,
-- naive serial backend,
-- blocked vectorized backend,
-- MPI candidate-scoring backend skeleton,
-- manifest-driven multi-source corpus building,
-- stronger text normalization and duplicate auditing,
-- embedding and projection scripts,
-- phrase search and poem-to-poem search,
-- poet centroid construction,
-- benchmark scripts,
-- basic heatmap rendering,
-- early Streamlit UI,
-- and Slurm wrappers for cluster use.
+- Exact GP fitting via Cholesky factorization
+- Blocked vectorized Python backend
+- **ScaLAPACK native backend with distributed linear algebra**
+- **Milestone 1B: Distributed kernel assembly from features**
+  - Broadcasts features (30MB) instead of matrix (800MB)
+  - Parallel RBF kernel assembly across ranks
+  - BLAS DGEMM optimization for 20-40× speedup
+  - 8× reduction in overhead vs centralized scatter/gather
+- Manifest-driven multi-source corpus building
+- Text normalization and duplicate auditing
+- Embedding and 2D projection pipeline
+- Phrase search and poem-to-poem search
+- Interactive CLI with exploit/explore recommendations
+- Comprehensive benchmarking and visualization tools
+- Slurm scripts for HPC cluster use
 
-Still rough or incomplete:
+**In progress / Next steps:**
 
-- no hardened GPU backend yet,
-- MPI path still needs more real-cluster validation,
-- benchmark plots are still deliberately simple,
-- the Streamlit app could use richer search/filter controls,
-- direct poem-neighbor panels inside the app would still be useful,
-- and the source manifest still needs more real corpus entries.
+- Large-scale benchmarks to find ScaLAPACK crossover point (m > 5000-10000)
+- Persistent daemon to eliminate subprocess overhead (~160ms per call)
+- GPU backend for kernel assembly and scoring
+- Enhanced Streamlit UI with richer search controls
+- Distributed scoring across large candidate sets
