@@ -73,9 +73,6 @@ def try_create_daemon_client(
     nprocs: int = 4,
     launcher: str = "mpirun",
     verbose: bool = False,
-    embeddings_path: str | None = None,
-    n_total: int | None = None,
-    d: int | None = None,
 ) -> Any | None:
     """
     Try to create and start a daemon client.
@@ -89,9 +86,6 @@ def try_create_daemon_client(
         nprocs: Number of MPI processes
         launcher: MPI launcher (mpirun, srun, etc.)
         verbose: Print status messages
-        embeddings_path: Path to embeddings file (for index-based scoring)
-        n_total: Total number of embeddings
-        d: Embedding dimension
 
     Returns:
         ScaLAPACKDaemonClient instance or None
@@ -114,10 +108,6 @@ def try_create_daemon_client(
             daemon_exe=daemon_exe,
         )
         client.start()
-
-        # Load embeddings if provided
-        if embeddings_path is not None and n_total is not None and d is not None:
-            client.load_embeddings(embeddings_path, n_total, d)
 
         if verbose:
             print(f"[Info] Started daemon with {nprocs} processes")

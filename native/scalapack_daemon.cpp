@@ -138,28 +138,12 @@ void signal_handler(int signum) {
     shutdown_requested = 1;
 }
 
-// Global embedding storage (loaded once at init)
-struct EmbeddingStore {
-    std::vector<double> data;  // All embeddings: n_total × d
-    int n_total;
-    int d;
-    bool loaded;
-
-    EmbeddingStore() : n_total(0), d(0), loaded(false) {}
-};
-
-EmbeddingStore g_embeddings;
-
 struct DaemonRequest {
-    std::string operation;  // "init", "fit", "score", "shutdown"
-
-    // Init parameters (load embeddings once)
-    std::string embeddings_path;
-    int n_total;
-    int d;
+    std::string operation;  // "fit", "score", "shutdown"
 
     // Fit parameters
     int m;
+    int d;
     double length_scale;
     double variance;
     double noise;
@@ -169,15 +153,14 @@ struct DaemonRequest {
     std::string alpha_out_path;
     std::string L_out_path;
 
-    // Score parameters (index-based)
-    int n_rated;
-    std::string rated_indices_path;  // Indices of rated poems (n_rated)
-    int n_query;
-    std::string query_indices_path;  // Indices of query poems (n_query)
-    std::string alpha_path;          // Alpha vector (n_rated)
-    std::string L_path;              // Cholesky factor (n_rated × n_rated)
-    std::string mean_out_path;       // Output mean (n_query)
-    std::string var_out_path;        // Output variance (n_query)
+    // Score parameters
+    int n_query;  // Number of query points to score
+    std::string x_query_path;  // Query points (n_query × d)
+    std::string x_rated_path;  // Rated points (m × d)
+    std::string alpha_path;    // Alpha vector (m)
+    std::string L_path;        // Cholesky factor (m × m)
+    std::string mean_out_path;  // Output mean (n_query)
+    std::string var_out_path;   // Output variance (n_query)
 };
 
 struct DaemonResponse {
@@ -253,31 +236,18 @@ bool parse_request_json(const std::string& json, DaemonRequest& req) {
     };
 
     // Parse operation-specific parameters
-    if (req.operation == "init") {
-        // Init operation: load embeddings once
-        if (!parse_string("embeddings_path", req.embeddings_path)) {
-            fprintf(stderr, "[Daemon] Failed to parse 'embeddings_path'\n");
+    if (req.operation == "score") {
+        // Score operation parameters
+        if (!parse_int("n_query", req.n_query)) {
+            fprintf(stderr, "[Daemon] Failed to parse 'n_query'\n");
             return false;
         }
-        if (!parse_int("n_total", req.n_total)) {
-            fprintf(stderr, "[Daemon] Failed to parse 'n_total'\n");
+        if (!parse_int("m", req.m)) {
+            fprintf(stderr, "[Daemon] Failed to parse 'm'\n");
             return false;
         }
         if (!parse_int("d", req.d)) {
             fprintf(stderr, "[Daemon] Failed to parse 'd'\n");
-            return false;
-        }
-        return true;
-    }
-
-    if (req.operation == "score") {
-        // Score operation parameters (index-based)
-        if (!parse_int("n_rated", req.n_rated)) {
-            fprintf(stderr, "[Daemon] Failed to parse 'n_rated'\n");
-            return false;
-        }
-        if (!parse_int("n_query", req.n_query)) {
-            fprintf(stderr, "[Daemon] Failed to parse 'n_query'\n");
             return false;
         }
         if (!parse_double("length_scale", req.length_scale)) {
@@ -288,12 +258,12 @@ bool parse_request_json(const std::string& json, DaemonRequest& req) {
             fprintf(stderr, "[Daemon] Failed to parse 'variance'\n");
             return false;
         }
-        if (!parse_string("rated_indices_path", req.rated_indices_path)) {
-            fprintf(stderr, "[Daemon] Failed to parse 'rated_indices_path'\n");
+        if (!parse_string("x_query_path", req.x_query_path)) {
+            fprintf(stderr, "[Daemon] Failed to parse 'x_query_path'\n");
             return false;
         }
-        if (!parse_string("query_indices_path", req.query_indices_path)) {
-            fprintf(stderr, "[Daemon] Failed to parse 'query_indices_path'\n");
+        if (!parse_string("x_rated_path", req.x_rated_path)) {
+            fprintf(stderr, "[Daemon] Failed to parse 'x_rated_path'\n");
             return false;
         }
         if (!parse_string("alpha_path", req.alpha_path)) {
@@ -504,145 +474,48 @@ int main(int argc, char** argv) {
                 break;
             }
 
-            // Handle init operation (load embeddings once)
-            if (req.operation == "init") {
-                fprintf(stderr, "[Daemon] Init operation: loading %d embeddings (dim=%d)\n",
-                        req.n_total, req.d);
-
-                // Broadcast operation code (3 = init)
-                int op_code = 3;
-                MPI_Bcast(&op_code, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-                // Broadcast dimensions
-                MPI_Bcast(&req.n_total, 1, MPI_INT, 0, MPI_COMM_WORLD);
-                MPI_Bcast(&req.d, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-                // Rank 0: load embeddings from disk
-                g_embeddings.data.resize(req.n_total * req.d);
-                if (!read_binary_file(req.embeddings_path, g_embeddings.data, req.n_total * req.d)) {
-                    fprintf(stderr, "[Daemon] Failed to read embeddings\n");
-                    DaemonResponse resp;
-                    resp.status = 1;
-                    resp.message = "Failed to read embeddings";
-                    resp.log_marginal_likelihood = 0.0;
-                    resp.fit_seconds = 0.0;
-                    resp.total_seconds = 0.0;
-
-                    int resp_fd = open(response_pipe, O_WRONLY);
-                    if (resp_fd >= 0) {
-                        std::string resp_json = create_response_json(resp);
-                        write(resp_fd, resp_json.c_str(), resp_json.length());
-                        close(resp_fd);
-                    }
-                    continue;
-                }
-
-                // Broadcast embeddings to all ranks
-                MPI_Bcast(g_embeddings.data.data(), req.n_total * req.d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-                g_embeddings.n_total = req.n_total;
-                g_embeddings.d = req.d;
-                g_embeddings.loaded = true;
-
-                fprintf(stderr, "[Daemon] Embeddings loaded: %.1f MB\n",
-                        (req.n_total * req.d * sizeof(double)) / (1024.0 * 1024.0));
-
-                // Send success response
-                DaemonResponse resp;
-                resp.status = 0;
-                resp.message = "Embeddings loaded";
-                resp.log_marginal_likelihood = 0.0;
-                resp.fit_seconds = 0.0;
-                resp.total_seconds = 0.0;
-
-                int resp_fd = open(response_pipe, O_WRONLY);
-                if (resp_fd >= 0) {
-                    std::string resp_json = create_response_json(resp);
-                    write(resp_fd, resp_json.c_str(), resp_json.length());
-                    close(resp_fd);
-                }
-                continue;
-            }
-
             // Handle score operation (parallel scoring across ranks)
             if (req.operation == "score") {
-                if (!g_embeddings.loaded) {
-                    fprintf(stderr, "[Daemon] Score requested but embeddings not loaded\n");
-                    DaemonResponse resp;
-                    resp.status = 1;
-                    resp.message = "Embeddings not loaded (call init first)";
-                    resp.log_marginal_likelihood = 0.0;
-                    resp.fit_seconds = 0.0;
-                    resp.total_seconds = 0.0;
-
-                    int resp_fd = open(response_pipe, O_WRONLY);
-                    if (resp_fd >= 0) {
-                        std::string resp_json = create_response_json(resp);
-                        write(resp_fd, resp_json.c_str(), resp_json.length());
-                        close(resp_fd);
-                    }
-                    continue;
-                }
-
-                fprintf(stderr, "[Daemon] Score operation requested: n_rated=%d, n_query=%d\n",
-                        req.n_rated, req.n_query);
+                fprintf(stderr, "[Daemon] Score operation requested: n_query=%d, m=%d, d=%d\n",
+                        req.n_query, req.m, req.d);
 
                 // Broadcast operation code (2 = score)
                 int op_code = 2;
                 MPI_Bcast(&op_code, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
                 // Broadcast parameters to all ranks
-                MPI_Bcast(&req.n_rated, 1, MPI_INT, 0, MPI_COMM_WORLD);
                 MPI_Bcast(&req.n_query, 1, MPI_INT, 0, MPI_COMM_WORLD);
+                MPI_Bcast(&req.m, 1, MPI_INT, 0, MPI_COMM_WORLD);
+                MPI_Bcast(&req.d, 1, MPI_INT, 0, MPI_COMM_WORLD);
                 MPI_Bcast(&req.length_scale, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
                 MPI_Bcast(&req.variance, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-                // Load indices (rank 0 only)
-                std::vector<int> rated_indices(req.n_rated);
-                std::vector<int> query_indices(req.n_query);
-                FILE* f_rated = fopen(req.rated_indices_path.c_str(), "rb");
-                if (!f_rated || fread(rated_indices.data(), sizeof(int), req.n_rated, f_rated) != (size_t)req.n_rated) {
-                    fprintf(stderr, "[Daemon] Failed to read rated_indices\n");
-                    if (f_rated) fclose(f_rated);
-                    continue;
-                }
-                fclose(f_rated);
-
-                FILE* f_query = fopen(req.query_indices_path.c_str(), "rb");
-                if (!f_query || fread(query_indices.data(), sizeof(int), req.n_query, f_query) != (size_t)req.n_query) {
-                    fprintf(stderr, "[Daemon] Failed to read query_indices\n");
-                    if (f_query) fclose(f_query);
-                    continue;
-                }
-                fclose(f_query);
-
-                // Extract rated embeddings from global store
-                std::vector<double> x_rated(req.n_rated * g_embeddings.d);
-                for (int i = 0; i < req.n_rated; ++i) {
-                    int idx = rated_indices[i];
-                    for (int j = 0; j < g_embeddings.d; ++j) {
-                        x_rated[i * g_embeddings.d + j] = g_embeddings.data[idx * g_embeddings.d + j];
-                    }
-                }
-
                 // Load GP state (rank 0 only)
-                std::vector<double> alpha, L_factor;
-                if (!read_binary_file(req.alpha_path, alpha, req.n_rated)) {
+                std::vector<double> x_rated, alpha, L_factor;
+                if (!read_binary_file(req.x_rated_path, x_rated, req.m * req.d)) {
+                    fprintf(stderr, "[Daemon] Failed to read x_rated\n");
+                    continue;
+                }
+                if (!read_binary_file(req.alpha_path, alpha, req.m)) {
                     fprintf(stderr, "[Daemon] Failed to read alpha\n");
                     continue;
                 }
-                if (!read_binary_file(req.L_path, L_factor, req.n_rated * req.n_rated)) {
+                if (!read_binary_file(req.L_path, L_factor, req.m * req.m)) {
                     fprintf(stderr, "[Daemon] Failed to read L_factor\n");
                     continue;
                 }
 
-                // Broadcast GP state to all ranks
-                MPI_Bcast(x_rated.data(), req.n_rated * g_embeddings.d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-                MPI_Bcast(alpha.data(), req.n_rated, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-                MPI_Bcast(L_factor.data(), req.n_rated * req.n_rated, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                // Load query points (rank 0 only)
+                std::vector<double> x_query;
+                if (!read_binary_file(req.x_query_path, x_query, req.n_query * req.d)) {
+                    fprintf(stderr, "[Daemon] Failed to read x_query\n");
+                    continue;
+                }
 
-                // Broadcast query indices to all ranks (so each can extract its chunk)
-                MPI_Bcast(query_indices.data(), req.n_query, MPI_INT, 0, MPI_COMM_WORLD);
+                // Broadcast GP state to all ranks
+                MPI_Bcast(x_rated.data(), req.m * req.d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                MPI_Bcast(alpha.data(), req.m, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                MPI_Bcast(L_factor.data(), req.m * req.m, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
                 // Distribute query points across ranks
                 int fit_rank, fit_size;
@@ -657,19 +530,24 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "[Daemon rank %d] Scoring chunk: [%d, %d) (%d points)\n",
                         fit_rank, my_start, my_end, my_n);
 
-                // Each rank extracts its query chunk from global embeddings using indices
-                std::vector<double> my_x_query(my_n * g_embeddings.d);
-                for (int i = 0; i < my_n; ++i) {
-                    int query_idx = query_indices[my_start + i];
-                    for (int j = 0; j < g_embeddings.d; ++j) {
-                        my_x_query[i * g_embeddings.d + j] = g_embeddings.data[query_idx * g_embeddings.d + j];
-                    }
+                // Each rank gets its chunk
+                std::vector<double> my_x_query(my_n * req.d);
+                std::vector<int> sendcounts(fit_size);
+                std::vector<int> displs(fit_size);
+                for (int r = 0; r < fit_size; ++r) {
+                    int start = r * chunk_size;
+                    int end = std::min(start + chunk_size, req.n_query);
+                    sendcounts[r] = std::max(0, end - start) * req.d;
+                    displs[r] = start * req.d;
                 }
 
+                MPI_Scatterv(x_query.data(), sendcounts.data(), displs.data(), MPI_DOUBLE,
+                             my_x_query.data(), my_n * req.d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
                 // Compute kernel matrix k_qr for my chunk
-                std::vector<double> k_qr(my_n * req.n_rated);
+                std::vector<double> k_qr(my_n * req.m);
                 if (my_n > 0) {
-                    compute_rbf_kernel(my_x_query.data(), my_n, x_rated.data(), req.n_rated, g_embeddings.d,
+                    compute_rbf_kernel(my_x_query.data(), my_n, x_rated.data(), req.m, req.d,
                                       req.length_scale, req.variance, k_qr.data());
                 }
 
@@ -679,7 +557,7 @@ int main(int argc, char** argv) {
                     const char trans = 'T';  // k_qr is column-major
                     const int m_blas = 1;
                     const int n_blas = my_n;
-                    const int k_blas = req.n_rated;
+                    const int k_blas = req.m;
                     const double alpha_blas = 1.0;
                     const double beta_blas = 0.0;
                     const int lda = my_n;
@@ -692,29 +570,29 @@ int main(int argc, char** argv) {
                 }
 
                 // Compute variance: variance - sum(v^2) where v = L^{-1} @ k_qr^T
-                // L is lower triangular (n_rated × n_rated), k_qr^T is (n_rated × my_n)
+                // L is lower triangular (m × m), k_qr^T is (m × my_n)
                 // Solve L @ V = k_qr^T for V, then var[i] = variance - sum(V[:,i]^2)
                 std::vector<double> my_var(my_n);
                 if (my_n > 0) {
-                    // k_qr is column-major (my_n × n_rated), so k_qr^T is implicitly (n_rated × my_n)
+                    // k_qr is column-major (my_n × m), so k_qr^T is implicitly (m × my_n)
                     // Copy k_qr to a work array since dtrsm modifies in-place
-                    std::vector<double> V(req.n_rated * my_n);
+                    std::vector<double> V(req.m * my_n);
                     for (int j = 0; j < my_n; ++j) {
-                        for (int i = 0; i < req.n_rated; ++i) {
-                            V[i + j * req.n_rated] = k_qr[j + i * my_n];  // Transpose
+                        for (int i = 0; i < req.m; ++i) {
+                            V[i + j * req.m] = k_qr[j + i * my_n];  // Transpose
                         }
                     }
 
-                    // Solve L @ V = V for V (L is lower triangular, n_rated × n_rated)
+                    // Solve L @ V = V for V (L is lower triangular, m × m)
                     const char side = 'L';
                     const char uplo = 'L';
                     const char transa = 'N';
                     const char diag = 'N';
-                    const int m_trsm = req.n_rated;
+                    const int m_trsm = req.m;
                     const int n_trsm = my_n;
                     const double alpha_trsm = 1.0;
-                    const int lda_trsm = req.n_rated;
-                    const int ldb_trsm = req.n_rated;
+                    const int lda_trsm = req.m;
+                    const int ldb_trsm = req.m;
 
                     dtrsm_(&side, &uplo, &transa, &diag, &m_trsm, &n_trsm, &alpha_trsm,
                            L_factor.data(), &lda_trsm, V.data(), &ldb_trsm);
@@ -722,8 +600,8 @@ int main(int argc, char** argv) {
                     // Compute variance: variance - ||v||^2 for each column
                     for (int j = 0; j < my_n; ++j) {
                         double sum_sq = 0.0;
-                        for (int i = 0; i < req.n_rated; ++i) {
-                            double val = V[i + j * req.n_rated];
+                        for (int i = 0; i < req.m; ++i) {
+                            double val = V[i + j * req.m];
                             sum_sq += val * val;
                         }
                         my_var[j] = std::max(0.0, req.variance - sum_sq);
@@ -881,43 +759,25 @@ int main(int argc, char** argv) {
             int op_code;
             MPI_Bcast(&op_code, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-            if (op_code == 3) {
-                // Init operation: receive broadcasted embeddings
-                int n_total, d;
-                MPI_Bcast(&n_total, 1, MPI_INT, 0, MPI_COMM_WORLD);
-                MPI_Bcast(&d, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-                g_embeddings.data.resize(n_total * d);
-                MPI_Bcast(g_embeddings.data.data(), n_total * d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-                g_embeddings.n_total = n_total;
-                g_embeddings.d = d;
-                g_embeddings.loaded = true;
-
-                fprintf(stderr, "[Daemon worker] Embeddings loaded: %d × %d\n", n_total, d);
-
-            } else if (op_code == 2) {
+            if (op_code == 2) {
                 // Score operation
                 DaemonRequest req;
-                MPI_Bcast(&req.n_rated, 1, MPI_INT, 0, MPI_COMM_WORLD);
                 MPI_Bcast(&req.n_query, 1, MPI_INT, 0, MPI_COMM_WORLD);
+                MPI_Bcast(&req.m, 1, MPI_INT, 0, MPI_COMM_WORLD);
+                MPI_Bcast(&req.d, 1, MPI_INT, 0, MPI_COMM_WORLD);
                 MPI_Bcast(&req.length_scale, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
                 MPI_Bcast(&req.variance, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
                 // Receive broadcasted GP state
-                std::vector<double> x_rated(req.n_rated * g_embeddings.d);
-                std::vector<double> alpha(req.n_rated);
-                std::vector<double> L_factor(req.n_rated * req.n_rated);
+                std::vector<double> x_rated(req.m * req.d);
+                std::vector<double> alpha(req.m);
+                std::vector<double> L_factor(req.m * req.m);
 
-                MPI_Bcast(x_rated.data(), req.n_rated * g_embeddings.d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-                MPI_Bcast(alpha.data(), req.n_rated, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-                MPI_Bcast(L_factor.data(), req.n_rated * req.n_rated, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                MPI_Bcast(x_rated.data(), req.m * req.d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                MPI_Bcast(alpha.data(), req.m, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                MPI_Bcast(L_factor.data(), req.m * req.m, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-                // Receive query indices
-                std::vector<int> query_indices(req.n_query);
-                MPI_Bcast(query_indices.data(), req.n_query, MPI_INT, 0, MPI_COMM_WORLD);
-
-                // Calculate my chunk
+                // Receive my chunk of query points
                 int fit_rank, fit_size;
                 MPI_Comm_rank(MPI_COMM_WORLD, &fit_rank);
                 MPI_Comm_size(MPI_COMM_WORLD, &fit_size);
@@ -927,19 +787,14 @@ int main(int argc, char** argv) {
                 int my_end = std::min(my_start + chunk_size, req.n_query);
                 int my_n = std::max(0, my_end - my_start);
 
-                // Extract my query points from global embeddings using indices
-                std::vector<double> my_x_query(my_n * g_embeddings.d);
-                for (int i = 0; i < my_n; ++i) {
-                    int query_idx = query_indices[my_start + i];
-                    for (int j = 0; j < g_embeddings.d; ++j) {
-                        my_x_query[i * g_embeddings.d + j] = g_embeddings.data[query_idx * g_embeddings.d + j];
-                    }
-                }
+                std::vector<double> my_x_query(my_n * req.d);
+                MPI_Scatterv(nullptr, nullptr, nullptr, MPI_DOUBLE,
+                             my_x_query.data(), my_n * req.d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
                 // Compute predictions (same as rank 0)
-                std::vector<double> k_qr(my_n * req.n_rated);
+                std::vector<double> k_qr(my_n * req.m);
                 if (my_n > 0) {
-                    compute_rbf_kernel(my_x_query.data(), my_n, x_rated.data(), req.n_rated, g_embeddings.d,
+                    compute_rbf_kernel(my_x_query.data(), my_n, x_rated.data(), req.m, req.d,
                                       req.length_scale, req.variance, k_qr.data());
                 }
 
@@ -948,7 +803,7 @@ int main(int argc, char** argv) {
                     const char trans = 'T';
                     const int m_blas = 1;
                     const int n_blas = my_n;
-                    const int k_blas = req.n_rated;
+                    const int k_blas = req.m;
                     const double alpha_blas = 1.0;
                     const double beta_blas = 0.0;
                     const int lda = my_n;
@@ -961,10 +816,10 @@ int main(int argc, char** argv) {
 
                 std::vector<double> my_var(my_n);
                 if (my_n > 0) {
-                    std::vector<double> V(req.n_rated * my_n);
+                    std::vector<double> V(req.m * my_n);
                     for (int j = 0; j < my_n; ++j) {
-                        for (int i = 0; i < req.n_rated; ++i) {
-                            V[i + j * req.n_rated] = k_qr[j + i * my_n];
+                        for (int i = 0; i < req.m; ++i) {
+                            V[i + j * req.m] = k_qr[j + i * my_n];
                         }
                     }
 
@@ -972,19 +827,19 @@ int main(int argc, char** argv) {
                     const char uplo = 'L';
                     const char transa = 'N';
                     const char diag = 'N';
-                    const int m_trsm = req.n_rated;
+                    const int m_trsm = req.m;
                     const int n_trsm = my_n;
                     const double alpha_trsm = 1.0;
-                    const int lda_trsm = req.n_rated;
-                    const int ldb_trsm = req.n_rated;
+                    const int lda_trsm = req.m;
+                    const int ldb_trsm = req.m;
 
                     dtrsm_(&side, &uplo, &transa, &diag, &m_trsm, &n_trsm, &alpha_trsm,
                            L_factor.data(), &lda_trsm, V.data(), &ldb_trsm);
 
                     for (int j = 0; j < my_n; ++j) {
                         double sum_sq = 0.0;
-                        for (int i = 0; i < req.n_rated; ++i) {
-                            double val = V[i + j * req.n_rated];
+                        for (int i = 0; i < req.m; ++i) {
+                            double val = V[i + j * req.m];
                             sum_sq += val * val;
                         }
                         my_var[j] = std::max(0.0, req.variance - sum_sq);

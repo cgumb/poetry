@@ -43,9 +43,6 @@ class ScaLAPACKDaemonClient:
 
         self.daemon_process: subprocess.Popen | None = None
         self._started = False
-        self._embeddings_loaded = False
-        self._n_total = 0
-        self._d = 0
 
     def start(self) -> None:
         """Start the daemon if not already running."""
@@ -91,52 +88,6 @@ class ScaLAPACKDaemonClient:
         self._started = True
         print(f"[DaemonClient] Daemon started successfully")
 
-    def load_embeddings(self, embeddings_path: str | Path, n_total: int, d: int) -> None:
-        """
-        Load embeddings into daemon memory (one-time operation).
-
-        Args:
-            embeddings_path: Path to binary file with all embeddings (n_total × d)
-            n_total: Total number of embeddings
-            d: Embedding dimension
-        """
-        if not self._started:
-            raise RuntimeError("Daemon not started. Call start() first.")
-
-        if self._embeddings_loaded:
-            print("[DaemonClient] Embeddings already loaded, skipping")
-            return
-
-        print(f"[DaemonClient] Loading {n_total} embeddings (dim={d}) into daemon...")
-
-        # Create init request
-        request = {
-            "operation": "init",
-            "embeddings_path": str(Path(embeddings_path).resolve()),
-            "n_total": int(n_total),
-            "d": int(d),
-        }
-
-        request_json = json.dumps(request) + "\n"
-
-        # Send request
-        with open(self.request_pipe, "w") as f:
-            f.write(request_json)
-
-        # Read response
-        with open(self.response_pipe, "r") as f:
-            response_json = f.read()
-
-        response = json.loads(response_json)
-
-        if response["status"] != 0:
-            raise RuntimeError(f"Daemon init error: {response['message']}")
-
-        self._embeddings_loaded = True
-        self._n_total = n_total
-        self._d = d
-        print(f"[DaemonClient] Embeddings loaded successfully")
-
     def shutdown(self) -> None:
         """Shutdown the daemon gracefully."""
         if not self._started or self.daemon_process is None:
@@ -178,24 +129,24 @@ class ScaLAPACKDaemonClient:
 
     def score_all(
         self,
-        rated_indices: np.ndarray,
-        query_indices: np.ndarray,
+        x_query: np.ndarray,
+        x_rated: np.ndarray,
         alpha: np.ndarray,
         L_factor: np.ndarray,
         length_scale: float,
         variance: float,
     ) -> dict[str, Any]:
         """
-        Score all query points in parallel using the daemon (index-based).
+        Score all query points in parallel using the daemon.
 
-        This uses pre-loaded embeddings in daemon memory, passing only indices.
-        This eliminates the massive I/O overhead of writing full embedding matrices.
+        This distributes the query points across MPI ranks for embarrassingly
+        parallel prediction, which is much faster than serial scoring.
 
         Args:
-            rated_indices: Indices of rated points (n_rated,)
-            query_indices: Indices of query points (n_query,)
-            alpha: Solution vector from fit (n_rated,)
-            L_factor: Cholesky factor from fit (n_rated × n_rated)
+            x_query: Query points (n_query × d)
+            x_rated: Rated points used for training (m × d)
+            alpha: Solution vector from fit (m,)
+            L_factor: Cholesky factor from fit (m × m)
             length_scale: RBF kernel length scale
             variance: RBF kernel variance
 
@@ -208,39 +159,39 @@ class ScaLAPACKDaemonClient:
         if not self._started:
             raise RuntimeError("Daemon not started. Call start() first.")
 
-        if not self._embeddings_loaded:
-            raise RuntimeError("Embeddings not loaded. Call load_embeddings() first.")
+        n_query, d = x_query.shape
+        m = x_rated.shape[0]
 
-        n_rated = len(rated_indices)
-        n_query = len(query_indices)
+        if x_rated.shape[1] != d:
+            raise ValueError(f"x_rated.shape[1]={x_rated.shape[1]} != d={d}")
+        if alpha.shape != (m,):
+            raise ValueError(f"alpha.shape={alpha.shape} != ({m},)")
+        if L_factor.shape != (m, m):
+            raise ValueError(f"L_factor.shape={L_factor.shape} != ({m}, {m})")
 
-        if alpha.shape != (n_rated,):
-            raise ValueError(f"alpha.shape={alpha.shape} != ({n_rated},)")
-        if L_factor.shape != (n_rated, n_rated):
-            raise ValueError(f"L_factor.shape={L_factor.shape} != ({n_rated}, {n_rated})")
-
-        # Write indices and GP state to temp files (much smaller than full embeddings!)
-        rated_indices_path = self.temp_dir / "rated_indices.bin"
-        query_indices_path = self.temp_dir / "query_indices.bin"
+        # Write inputs to temp files
+        x_query_path = self.temp_dir / "x_query.bin"
+        x_rated_path = self.temp_dir / "x_rated.bin"
         alpha_path = self.temp_dir / "alpha.bin"
         L_path = self.temp_dir / "L.bin"
         mean_out_path = self.temp_dir / "mean_out.bin"
         var_out_path = self.temp_dir / "var_out.bin"
 
-        rated_indices.astype(np.int32, copy=False).tofile(rated_indices_path)
-        query_indices.astype(np.int32, copy=False).tofile(query_indices_path)
+        x_query.astype(np.float64, copy=False).tofile(x_query_path)
+        x_rated.astype(np.float64, copy=False).tofile(x_rated_path)
         alpha.astype(np.float64, copy=False).tofile(alpha_path)
         L_factor.astype(np.float64, copy=False).tofile(L_path)
 
         # Create request
         request = {
             "operation": "score",
-            "n_rated": int(n_rated),
             "n_query": int(n_query),
+            "m": int(m),
+            "d": int(d),
             "length_scale": float(length_scale),
             "variance": float(variance),
-            "rated_indices_path": str(rated_indices_path),
-            "query_indices_path": str(query_indices_path),
+            "x_query_path": str(x_query_path),
+            "x_rated_path": str(x_rated_path),
             "alpha_path": str(alpha_path),
             "L_path": str(L_path),
             "mean_out_path": str(mean_out_path),
@@ -272,8 +223,8 @@ class ScaLAPACKDaemonClient:
         elapsed = time.time() - start
 
         # Cleanup temp files
-        rated_indices_path.unlink()
-        query_indices_path.unlink()
+        x_query_path.unlink()
+        x_rated_path.unlink()
         alpha_path.unlink()
         L_path.unlink()
         mean_out_path.unlink()
