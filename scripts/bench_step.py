@@ -16,6 +16,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", choices=["naive", "blocked"], required=True)
     parser.add_argument("--fit-backend", choices=["python", "native_reference"], default="python")
+    parser.add_argument("--score-backend", choices=["python", "daemon", "auto", "none"], default="python",
+                        help="Scoring backend: python (fast for typical use), daemon (parallel), auto (try daemon), none (skip scoring)")
     parser.add_argument("--n-poems", type=int, default=5000)
     parser.add_argument("--dim", type=int, default=384)
     parser.add_argument("--m-rated", type=int, default=20)
@@ -72,6 +74,7 @@ def main() -> None:
             optimize_hyperparameters=args.optimize_hyperparameters,
             optimizer_maxiter=args.optimizer_maxiter,
             fit_backend=args.fit_backend,
+            score_backend=args.score_backend,
             scalapack_launcher=args.scalapack_launcher,
             scalapack_nprocs=args.scalapack_nprocs,
             scalapack_executable=args.scalapack_executable,

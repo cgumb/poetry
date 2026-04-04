@@ -306,9 +306,14 @@ def plot_block_size_impact(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: in
 def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: int) -> None:
     """Plot: Detailed time breakdown (fit, score, select) with side-by-side comparison."""
     # Check if we have the required columns for detailed breakdown
-    required_cols = ["fit_seconds", "score_seconds"]
-    if not all(col in df.columns for col in required_cols):
-        print(f"Skipping detailed breakdown - missing required columns")
+    if "fit_seconds" not in df.columns:
+        print(f"Skipping detailed breakdown - missing fit_seconds column")
+        return
+
+    # Check if scoring was actually performed (not score_backend=none)
+    has_scoring = "score_seconds" in df.columns and df["score_seconds"].max() > 0.001
+    if not has_scoring:
+        print(f"Skipping detailed breakdown - no scoring data (likely score_backend=none)")
         return
 
     # Optional columns (not all CSVs have these)

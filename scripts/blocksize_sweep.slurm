@@ -75,6 +75,7 @@ for m_rated in $M_RATED_LIST; do
   python -u scripts/bench_step.py \
     --backend blocked \
     --fit-backend python \
+    --score-backend none \
     --n-poems $N_POEMS \
     --m-rated $m_rated \
     --seed 42 \
@@ -88,6 +89,7 @@ for m_rated in $M_RATED_LIST; do
       python -u scripts/bench_step.py \
         --backend blocked \
         --fit-backend native_reference \
+        --score-backend none \
         --n-poems $N_POEMS \
         --m-rated $m_rated \
         --seed 42 \
