@@ -66,13 +66,24 @@ def main() -> None:
     print("This may take a few seconds...")
 
     try:
-        # Read the batch file
+        # Read the batch file and parse JSONL into list
+        import json
+        requests_list = []
         with args.input.open("r") as f:
-            requests_content = f.read()
+            for line in f:
+                line = line.strip()
+                if line:
+                    requests_list.append(json.loads(line))
+
+        if not requests_list:
+            print(f"Error: No requests found in {args.input}")
+            sys.exit(1)
+
+        print(f"Parsed {len(requests_list)} requests from file")
 
         # Create the batch
         batch = client.messages.batches.create(
-            requests=requests_content
+            requests=requests_list
         )
 
         print(f"\n✓ Batch submitted successfully!")
