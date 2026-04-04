@@ -2,7 +2,7 @@
 #SBATCH -p general
 #SBATCH -N1
 #SBATCH -n16
-#SBATCH -t 02:00:00
+#SBATCH -t 04:00:00
 #SBATCH -J large-scale-bench
 #SBATCH -o results/large-scale-bench-%j.out
 #SBATCH -e results/large-scale-bench-%j.err
@@ -51,43 +51,49 @@ OUTPUT_CSV="results/large_scale_${TIMESTAMP}.csv"
 
 echo "Running large-scale benchmark sweep..."
 echo "Output: $OUTPUT_CSV"
-echo "Testing: m ∈ {1000, 2000, 5000, 10000}, processes ∈ {1, 4, 8, 16}"
+echo "Testing: m ∈ {2000, 5000, 7000, 10000, 15000, 20000}"
+echo "         block_size ∈ {64, 128}"
+echo "         processes ∈ {1, 4, 8, 16}"
 echo ""
 
-# Problem sizes: larger to see crossover point
-M_RATED_LIST="1000 2000 5000 10000"
+# Problem sizes: find ScaLAPACK crossover point
+M_RATED_LIST="2000 5000 7000 10000 15000 20000"
+BLOCK_SIZE_LIST="64 128"
 NPROCS_LIST="1 4 8 16"
+N_POEMS=25000  # Must be > max(M_RATED_LIST)
 
 # Test each combination
 for m_rated in $M_RATED_LIST; do
   echo "=== m_rated=$m_rated ==="
 
-  # Python baseline (always 1 thread)
+  # Python baseline (always 1 thread, once per m)
   echo "  Python (1 thread)..."
   python -u scripts/bench_step.py \
     --backend blocked \
     --fit-backend python \
-    --n-poems 10000 \
+    --n-poems $N_POEMS \
     --m-rated $m_rated \
     --seed 42 \
     --output-csv "$OUTPUT_CSV" \
     --append
 
-  # ScaLAPACK with varying process counts
+  # ScaLAPACK with varying block sizes and process counts
   for nprocs in $NPROCS_LIST; do
-    echo "  ScaLAPACK ($nprocs processes, Milestone 1B)..."
-    python -u scripts/bench_step.py \
-      --backend blocked \
-      --fit-backend native_reference \
-      --n-poems 10000 \
-      --m-rated $m_rated \
-      --seed 42 \
-      --scalapack-launcher mpirun \
-      --scalapack-nprocs $nprocs \
-      --scalapack-block-size 64 \
-      --scalapack-native-backend scalapack \
-      --output-csv "$OUTPUT_CSV" \
-      --append
+    for block_size in $BLOCK_SIZE_LIST; do
+      echo "  ScaLAPACK ($nprocs processes, block_size=$block_size)..."
+      python -u scripts/bench_step.py \
+        --backend blocked \
+        --fit-backend native_reference \
+        --n-poems $N_POEMS \
+        --m-rated $m_rated \
+        --seed 42 \
+        --scalapack-launcher mpirun \
+        --scalapack-nprocs $nprocs \
+        --scalapack-block-size $block_size \
+        --scalapack-native-backend scalapack \
+        --output-csv "$OUTPUT_CSV" \
+        --append
+    done
   done
 
   echo ""
@@ -101,7 +107,12 @@ echo "To visualize:"
 echo "  python scripts/visualize_benchmarks.py $OUTPUT_CSV"
 echo ""
 echo "Expected results:"
-echo "  m=1000-2000: Python likely faster (overhead dominant)"
-echo "  m=5000: ScaLAPACK competitive with 8-16 processes"
-echo "  m=10000: ScaLAPACK should beat Python with 8-16 processes"
+echo "  m=2000-5000: Python likely faster (overhead dominant)"
+echo "  m=7000-10000: ScaLAPACK competitive with 8-16 processes"
+echo "  m=15000-20000: ScaLAPACK should beat Python with 8-16 processes"
+echo ""
+echo "Key insights to find:"
+echo "  - Crossover point where ScaLAPACK beats Python"
+echo "  - Optimal block size (64 vs 128)"
+echo "  - Scaling efficiency with process count"
 echo "========================================"
