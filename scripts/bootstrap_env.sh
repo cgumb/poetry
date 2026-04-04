@@ -84,32 +84,34 @@ if [[ $ENABLE_GPU -eq 1 ]]; then
     echo ""
   fi
 
-  # Install miniconda if system mamba doesn't work
+  # Install micromamba if system mamba doesn't work
   if [[ $MAMBA_WORKS -eq 0 ]]; then
-    MINICONDA_DIR="$HOME/miniconda3"
+    MICROMAMBA_BIN="$HOME/.local/bin/micromamba"
+    MICROMAMBA_ROOT="$HOME/micromamba"
 
-    if [[ ! -f "$MINICONDA_DIR/bin/conda" ]]; then
-      echo "Installing Miniconda to $MINICONDA_DIR..."
-      echo "This is a one-time setup that will take a few minutes..."
+    if [[ ! -f "$MICROMAMBA_BIN" ]]; then
+      echo "Installing micromamba (fast, lightweight conda alternative)..."
+      echo "This is a one-time setup that will take ~30 seconds..."
       echo ""
 
-      # Download miniconda installer
-      INSTALLER="$TMPDIR/miniconda.sh"
-      wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O "$INSTALLER"
+      # Create directories
+      mkdir -p "$(dirname "$MICROMAMBA_BIN")"
+      mkdir -p "$MICROMAMBA_ROOT"
 
-      # Install
-      bash "$INSTALLER" -b -p "$MINICONDA_DIR"
-      rm "$INSTALLER"
+      # Download micromamba binary (single static executable)
+      curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | \
+        tar -xvj -C "$(dirname "$MICROMAMBA_BIN")" bin/micromamba
 
-      echo "Miniconda installed successfully"
+      echo "Micromamba installed successfully"
       echo ""
     fi
 
-    # Initialize conda
-    source "$MINICONDA_DIR/etc/profile.d/conda.sh"
+    # Set up micromamba environment
+    export MAMBA_ROOT_PREFIX="$MICROMAMBA_ROOT"
+    eval "$("$MICROMAMBA_BIN" shell hook -s bash)"
 
-    # Use conda instead of mamba for environment creation
-    CONDA_CMD="conda"
+    # Use micromamba for environment creation
+    CONDA_CMD="$MICROMAMBA_BIN"
   else
     CONDA_CMD="mamba"
   fi
@@ -158,9 +160,15 @@ EOF
   # Create new environment
   $CONDA_CMD env create -f "$ENV_FILE"
 
-  # Activate the conda environment
-  eval "$(conda shell.bash hook)"
-  conda activate "$ENV_NAME"
+  # Activate the environment
+  if [[ $MAMBA_WORKS -eq 0 ]]; then
+    # Using micromamba
+    micromamba activate "$ENV_NAME"
+  else
+    # Using system mamba
+    eval "$(conda shell.bash hook)"
+    conda activate "$ENV_NAME"
+  fi
 
   # Install poetry_gp package in editable mode
   echo ""

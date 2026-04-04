@@ -71,9 +71,18 @@ if [[ $PREFER_GPU -eq 1 ]] || [[ $HAS_CONDA_ENV -eq 1 && $HAS_VENV -eq 0 ]]; the
 
   echo "Activating GPU environment..."
 
-  # Try user-space miniconda first
-  if [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]]; then
+  # Try user-space micromamba first
+  MICROMAMBA_BIN="$HOME/.local/bin/micromamba"
+  if [[ -f "$MICROMAMBA_BIN" ]]; then
+    export MAMBA_ROOT_PREFIX="$HOME/micromamba"
+    eval "$("$MICROMAMBA_BIN" shell hook -s bash)"
+    micromamba activate poetry-gpu
+    ACTIVATED_WITH="micromamba"
+  elif [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]]; then
+    # Fall back to miniconda if it exists
     source "$HOME/miniconda3/etc/profile.d/conda.sh"
+    conda activate poetry-gpu
+    ACTIVATED_WITH="conda"
   elif [[ -f "$SPACK_SETUP" ]]; then
     # Fall back to spack mamba (if it works)
     source "$SPACK_SETUP"
@@ -81,17 +90,19 @@ if [[ $PREFER_GPU -eq 1 ]] || [[ $HAS_CONDA_ENV -eq 1 && $HAS_VENV -eq 0 ]]; the
     # Try to initialize conda from spack
     if command -v conda &> /dev/null; then
       eval "$(conda shell.bash hook 2>/dev/null)" || true
+      conda activate poetry-gpu
+      ACTIVATED_WITH="spack mamba"
     fi
   else
     # Try system conda
     if command -v conda &> /dev/null; then
       eval "$(conda shell.bash hook)"
+      conda activate poetry-gpu
+      ACTIVATED_WITH="system conda"
     fi
   fi
 
-  conda activate poetry-gpu
-
-  echo "✓ GPU environment activated (conda)"
+  echo "✓ GPU environment activated ($ACTIVATED_WITH)"
   echo "  Python: $(which python)"
   echo "  CuPy available: $(python -c 'import cupy; print("YES")' 2>/dev/null || echo 'NO')"
 
