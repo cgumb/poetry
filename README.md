@@ -38,49 +38,61 @@ This makes the project a good vehicle for discussing:
 
 ## Getting started
 
-Typical cluster-friendly workflow:
+### CPU-only setup (default)
+
+For typical HPC workloads with ScaLAPACK fitting:
 
 ```bash
-source ~/161588/spack/share/spack/setup-env.sh
-spack env activate CS-2050
-bash scripts/bootstrap_venv.sh
-source .venv/bin/activate
+bash scripts/bootstrap_env.sh
+source scripts/activate_env.sh
 python scripts/app/check_env.py
 ```
 
-Optional app dependencies such as Streamlit can be installed with:
+To include Streamlit app dependencies:
 
 ```bash
-INSTALL_APP_REQUIREMENTS=1 bash scripts/bootstrap_venv.sh
+bash scripts/bootstrap_env.sh --app
 ```
 
-Optional LLM dependencies for metadata imputation:
+### GPU-enabled setup (optional)
+
+For GPU-accelerated scoring (10-100× faster for m > 5000):
 
 ```bash
-source .venv/bin/activate
+# Must be run on a GPU node or with GPU access
+srun -p gpu --gres=gpu:1 -n1 -t 30:00 --pty bash
+cd ~/poetry
+bash scripts/bootstrap_env.sh --gpu
+source scripts/activate_env.sh --gpu
+python -c "import cupy; print(f'CuPy: {cupy.__version__}')"
+```
+
+This creates a mamba-based conda environment with CuPy pre-compiled for GPU nodes, avoiding CPU architecture mismatch issues between general and GPU nodes.
+
+**Note:** GPU setup uses CS-2050-mamba spack environment + conda, while CPU setup uses CS-2050 + venv. Both approaches work seamlessly across node types.
+
+### Manual activation
+
+Once bootstrapped, activate with:
+
+```bash
+# CPU environment
+source scripts/activate_env.sh
+
+# GPU environment (if created)
+source scripts/activate_env.sh --gpu
+```
+
+The activation script auto-detects which environment was created and activates the appropriate one.
+
+### Optional LLM dependencies
+
+For metadata imputation (works in either environment):
+
+```bash
+source scripts/activate_env.sh
 pip install -r requirements-llm.txt
 ```
-
-Optional GPU acceleration for scoring (requires CUDA-capable GPU):
-
-```bash
-source .venv/bin/activate
-
-# Check CUDA version first
-nvidia-smi
-
-# Install CuPy for your CUDA version
-# For CUDA 11.x:
-pip install cupy-cuda11x
-
-# For CUDA 12.x:
-pip install cupy-cuda12x
-
-# Or use conda:
-conda install -c conda-forge cupy
-```
-
-See `requirements-gpu.txt` for details. GPU scoring provides 10-100× speedup for large m (rated points > 5000).
 
 ## Canonical corpus build path
 

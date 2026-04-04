@@ -11,8 +11,8 @@
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$HOME/poetry}"
-SPACK_SETUP_SCRIPT="${SPACK_SETUP_SCRIPT:-$HOME/161588/spack/share/spack/setup-env.sh}"
-SPACK_ENV_NAME="${SPACK_ENV_NAME:-CS-2050}"
+export TMPDIR="${TMPDIR:-$HOME/tmp}"
+mkdir -p "$TMPDIR"
 
 cd "$REPO_DIR"
 mkdir -p results
@@ -23,14 +23,9 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "========================================"
 echo ""
 
-# Spack environment
-if [[ -f "$SPACK_SETUP_SCRIPT" ]]; then
-  source "$SPACK_SETUP_SCRIPT"
-  spack env activate "$SPACK_ENV_NAME" || echo "Warning: Spack activation failed"
-fi
-
-# Python virtual environment
-source .venv/bin/activate
+# Activate Python environment (auto-detects GPU vs CPU setup)
+echo "Activating Python environment..."
+source scripts/activate_env.sh --gpu
 
 # Check GPU availability
 echo "Checking GPU availability..."
