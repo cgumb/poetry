@@ -166,10 +166,17 @@ Interactive CLI:
 python scripts/app/interactive_cli.py
 ```
 
+With optional parallel scoring (automatically falls back to Python if unavailable):
+
+```bash
+python scripts/app/interactive_cli.py --score-backend auto --daemon-nprocs 16
+```
+
 The CLI features:
 - 🎨 **Rich terminal UI** with colors, panels, and tables
 - 👥 **Multi-user support** - multiple users can maintain separate rating sessions
 - 📊 **Exploit/explore recommendations** powered by Gaussian processes
+- ⚡ **Optional parallel scoring** - daemon-based MPI scoring with automatic fallback
 - 🔍 **Search** by title, poet, or text content
 - ⏱️ **Performance metrics** for each GP computation
 - 💾 **Session persistence** - resume where you left off
@@ -327,6 +334,11 @@ scripts/
   - Broadcasts features (30MB) instead of matrix (800MB)
   - Parallel RBF kernel assembly across ranks
   - BLAS DGEMM optimization for 20-40× speedup
+- **Milestone 1C: Persistent daemon + parallel scoring**
+  - Persistent MPI daemon eliminates ~160ms subprocess overhead
+  - Embarrassingly parallel scoring across 10k+ poems
+  - Graceful fallback to Python when MPI unavailable
+  - **Analytic gradients** for hyperparameter optimization (2-5× faster)
   - 8× reduction in overhead vs centralized scatter/gather
 - Manifest-driven multi-source corpus building
 - Text normalization and duplicate auditing

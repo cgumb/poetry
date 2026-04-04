@@ -8,6 +8,7 @@ import numpy as np
 
 from ..gp_exact import GPState, fit_exact_gp, predict_block
 from .scalapack_fit import fit_exact_gp_scalapack_from_rated
+from .scoring import score_all_with_fallback, try_create_daemon_client
 
 
 @dataclass
@@ -42,7 +43,9 @@ def run_blocked_step(
     optimize_hyperparameters: bool = False,
     optimizer_maxiter: int = 50,
     fit_backend: str = "python",
-    score_backend: str = "python",
+    score_backend: str = "python",  # "python", "daemon", "auto"
+    daemon_nprocs: int = 4,
+    daemon_launcher: str = "mpirun",
     scalapack_launcher: str = "srun",
     scalapack_nprocs: int = 4,
     scalapack_executable: str = "native/build/scalapack_gp_fit",
@@ -102,10 +105,14 @@ def run_blocked_step(
 
     n = embeddings.shape[0]
     score_start = perf_counter()
+
     if score_backend == "none":
         mean = np.empty(0, dtype=np.float64)
         variance_arr = np.empty(0, dtype=np.float64)
+        score_seconds_inner = 0.0
+
     elif score_backend == "python":
+        # Pure Python scoring (serial)
         mean = np.empty(n, dtype=np.float64)
         variance_arr = np.empty(n, dtype=np.float64)
         for start in range(0, n, block_size):
@@ -113,8 +120,34 @@ def run_blocked_step(
             mu_block, var_block = predict_block(state, embeddings[start:stop])
             mean[start:stop] = mu_block
             variance_arr[start:stop] = var_block
+        score_seconds_inner = 0.0
+
+    elif score_backend == "daemon":
+        # Daemon scoring (parallel) - fail if unavailable
+        daemon = try_create_daemon_client(nprocs=daemon_nprocs, launcher=daemon_launcher)
+        if daemon is None:
+            raise RuntimeError("Daemon scoring requested but daemon unavailable")
+        try:
+            mean, variance_arr, score_seconds_inner = score_all_with_fallback(
+                state, embeddings, block_size, daemon_client=daemon
+            )
+        finally:
+            daemon.shutdown()
+
+    elif score_backend == "auto":
+        # Try daemon, fall back to Python automatically
+        daemon = try_create_daemon_client(nprocs=daemon_nprocs, launcher=daemon_launcher, verbose=True)
+        try:
+            mean, variance_arr, score_seconds_inner = score_all_with_fallback(
+                state, embeddings, block_size, daemon_client=daemon
+            )
+        finally:
+            if daemon is not None:
+                daemon.shutdown()
+
     else:
         raise ValueError(f"Unknown score_backend: {score_backend}")
+
     score_end = perf_counter()
 
     select_start = perf_counter()

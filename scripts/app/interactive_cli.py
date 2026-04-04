@@ -41,6 +41,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--noise", type=float, default=1e-3)
     parser.add_argument("--optimize-hyperparameters", action="store_true")
     parser.add_argument("--optimizer-maxiter", type=int, default=50)
+    parser.add_argument("--score-backend", type=str, default="auto",
+                        choices=["python", "daemon", "auto"],
+                        help="Scoring backend: python (serial), daemon (parallel), auto (try daemon, fall back to python)")
+    parser.add_argument("--daemon-nprocs", type=int, default=4,
+                        help="Number of MPI processes for daemon scoring")
+    parser.add_argument("--daemon-launcher", type=str, default="mpirun",
+                        help="MPI launcher for daemon (mpirun, srun, etc.)")
     return parser.parse_args()
 
 
@@ -358,6 +365,9 @@ def main() -> None:
                 noise=current_noise,
                 optimize_hyperparameters=args.optimize_hyperparameters,
                 optimizer_maxiter=args.optimizer_maxiter,
+                score_backend=args.score_backend,
+                daemon_nprocs=args.daemon_nprocs,
+                daemon_launcher=args.daemon_launcher,
             )
 
         if args.optimize_hyperparameters:

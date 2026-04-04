@@ -127,6 +127,115 @@ class ScaLAPACKDaemonClient:
             self._started = False
             self.daemon_process = None
 
+    def score_all(
+        self,
+        x_query: np.ndarray,
+        x_rated: np.ndarray,
+        alpha: np.ndarray,
+        L_factor: np.ndarray,
+        length_scale: float,
+        variance: float,
+    ) -> dict[str, Any]:
+        """
+        Score all query points in parallel using the daemon.
+
+        This distributes the query points across MPI ranks for embarrassingly
+        parallel prediction, which is much faster than serial scoring.
+
+        Args:
+            x_query: Query points (n_query × d)
+            x_rated: Rated points used for training (m × d)
+            alpha: Solution vector from fit (m,)
+            L_factor: Cholesky factor from fit (m × m)
+            length_scale: RBF kernel length scale
+            variance: RBF kernel variance
+
+        Returns:
+            dict with keys:
+                - mean: np.ndarray (n_query,)
+                - variance: np.ndarray (n_query,)
+                - score_seconds: float
+        """
+        if not self._started:
+            raise RuntimeError("Daemon not started. Call start() first.")
+
+        n_query, d = x_query.shape
+        m = x_rated.shape[0]
+
+        if x_rated.shape[1] != d:
+            raise ValueError(f"x_rated.shape[1]={x_rated.shape[1]} != d={d}")
+        if alpha.shape != (m,):
+            raise ValueError(f"alpha.shape={alpha.shape} != ({m},)")
+        if L_factor.shape != (m, m):
+            raise ValueError(f"L_factor.shape={L_factor.shape} != ({m}, {m})")
+
+        # Write inputs to temp files
+        x_query_path = self.temp_dir / "x_query.bin"
+        x_rated_path = self.temp_dir / "x_rated.bin"
+        alpha_path = self.temp_dir / "alpha.bin"
+        L_path = self.temp_dir / "L.bin"
+        mean_out_path = self.temp_dir / "mean_out.bin"
+        var_out_path = self.temp_dir / "var_out.bin"
+
+        x_query.astype(np.float64, copy=False).tofile(x_query_path)
+        x_rated.astype(np.float64, copy=False).tofile(x_rated_path)
+        alpha.astype(np.float64, copy=False).tofile(alpha_path)
+        L_factor.astype(np.float64, copy=False).tofile(L_path)
+
+        # Create request
+        request = {
+            "operation": "score",
+            "n_query": int(n_query),
+            "m": int(m),
+            "d": int(d),
+            "length_scale": float(length_scale),
+            "variance": float(variance),
+            "x_query_path": str(x_query_path),
+            "x_rated_path": str(x_rated_path),
+            "alpha_path": str(alpha_path),
+            "L_path": str(L_path),
+            "mean_out_path": str(mean_out_path),
+            "var_out_path": str(var_out_path),
+        }
+
+        request_json = json.dumps(request) + "\n"
+
+        import time
+        start = time.time()
+
+        # Send request
+        with open(self.request_pipe, "w") as f:
+            f.write(request_json)
+
+        # Read response
+        with open(self.response_pipe, "r") as f:
+            response_json = f.read()
+
+        response = json.loads(response_json)
+
+        if response["status"] != 0:
+            raise RuntimeError(f"Daemon scoring error: {response['message']}")
+
+        # Read output data
+        mean = np.fromfile(mean_out_path, dtype=np.float64)
+        variance_out = np.fromfile(var_out_path, dtype=np.float64)
+
+        elapsed = time.time() - start
+
+        # Cleanup temp files
+        x_query_path.unlink()
+        x_rated_path.unlink()
+        alpha_path.unlink()
+        L_path.unlink()
+        mean_out_path.unlink()
+        var_out_path.unlink()
+
+        return {
+            "mean": mean,
+            "variance": variance_out,
+            "score_seconds": elapsed,
+        }
+
     def fit(
         self,
         x: np.ndarray,
