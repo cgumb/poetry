@@ -786,7 +786,48 @@ std::vector<double> build_local_rbf_blocks_from_features(
     const int local_col_start = (block_j / npcol) * nb;
     const int local_row_start = (block_i / nprow) * nb;
 
-    // Compute kernel values for this block using dot products
+    // Use BLAS DGEMM to compute Gram matrix block: G = X_rows @ X_cols^T
+    //
+    // Our features are ROW-MAJOR:
+    //   X_rows[i,k] is stored at x_rows[i*d + k]
+    //   X_cols[j,k] is stored at x_cols[j*d + k]
+    //
+    // DGEMM expects COLUMN-MAJOR matrices. Key insight:
+    //   A row-major (M,N) matrix with stride N, when interpreted as column-major,
+    //   becomes a (N,M) matrix with leading dimension N.
+    //
+    // So: X_rows (block_rows × d, row-major, stride=d)
+    //     → interpreted as column-major: (d × block_rows, LDA=d) = X_rows^T
+    //
+    // We want: gram = X_rows @ X_cols^T
+    //        = (X_rows^T)^T @ X_cols^T    [using the column-major interpretation]
+    //
+    // DGEMM call: C = op(A) @ op(B) where A, B, C are column-major
+    // dgemm('T', 'N', block_rows, block_cols, d, 1.0, X_rows, d, X_cols, d, 0.0, gram, block_rows)
+    // Computes: gram = X_rows^T^T @ X_cols^T = X_rows @ X_cols^T ✓
+
+    std::vector<double> gram_block(block_rows * block_cols, 0.0);
+
+    {
+      const char transa = 'T';  // Transpose A (because row-major input looks like A^T to DGEMM)
+      const char transb = 'N';  // Don't transpose B (B already looks like cols^T)
+      const double alpha = 1.0;
+      const double beta = 0.0;
+      const int m = block_rows;
+      const int n_blas = block_cols;
+      const int k = d;
+      const int lda = d;  // Leading dimension of X_rows when viewed as column-major
+      const int ldb = d;  // Leading dimension of X_cols when viewed as column-major
+      const int ldc = block_rows;  // Leading dimension of output (column-major)
+
+      const double* x_rows = x.data() + global_i_start * static_cast<std::size_t>(d);
+      const double* x_cols = x.data() + global_j_start * static_cast<std::size_t>(d);
+
+      dgemm_(&transa, &transb, &m, &n_blas, &k, &alpha, x_rows, &lda, x_cols, &ldb, &beta, gram_block.data(), &ldc);
+    }
+
+    // Apply RBF transformation to Gram matrix block
+    // gram_block is column-major (block_rows × block_cols), so gram[i,j] = gram_block[i + j*block_rows]
     for (int local_i = 0; local_i < block_rows; ++local_i) {
       const int global_i = global_i_start + local_i;
       const int local_row = local_row_start + local_i;
@@ -795,12 +836,8 @@ std::vector<double> build_local_rbf_blocks_from_features(
         const int global_j = global_j_start + local_j;
         const int local_col = local_col_start + local_j;
 
-        // Compute dot product manually for now (DGEMM optimization TODO)
-        double dot = 0.0;
-        for (int k = 0; k < d; ++k) {
-          dot += x[global_i * static_cast<std::size_t>(d) + k] *
-                 x[global_j * static_cast<std::size_t>(d) + k];
-        }
+        // Get dot product from DGEMM result (column-major storage)
+        const double dot = gram_block[local_i + local_j * block_rows];
 
         // RBF kernel: exp(-0.5 * ||x_i - x_j||^2 / length_scale^2)
         double d2 = norms[global_i] + norms[global_j] - 2.0 * dot;
