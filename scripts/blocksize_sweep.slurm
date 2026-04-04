@@ -60,6 +60,7 @@ echo ""
 M_RATED_LIST="7000 10000 15000 20000"
 BLOCK_SIZE_LIST="32 64 128 256"
 NPROCS_LIST="4 8 16"
+N_POEMS=25000  # Must be > max(M_RATED_LIST) to allow sampling
 
 # Test each combination
 for m_rated in $M_RATED_LIST; do
@@ -70,7 +71,7 @@ for m_rated in $M_RATED_LIST; do
   python -u scripts/bench_step.py \
     --backend blocked \
     --fit-backend python \
-    --n-poems 10000 \
+    --n-poems $N_POEMS \
     --m-rated $m_rated \
     --seed 42 \
     --output-csv "$OUTPUT_CSV" \
@@ -83,7 +84,7 @@ for m_rated in $M_RATED_LIST; do
       python -u scripts/bench_step.py \
         --backend blocked \
         --fit-backend native_reference \
-        --n-poems 10000 \
+        --n-poems $N_POEMS \
         --m-rated $m_rated \
         --seed 42 \
         --scalapack-launcher mpirun \
