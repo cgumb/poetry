@@ -23,9 +23,9 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "========================================"
 echo ""
 
-# Activate Python environment (auto-detects GPU vs CPU setup)
+# Activate Python environment (auto-detects based on partition)
 echo "Activating Python environment..."
-source scripts/activate_env.sh --gpu
+source scripts/activate_env.sh --auto
 
 # Check GPU availability
 echo "Checking GPU availability..."

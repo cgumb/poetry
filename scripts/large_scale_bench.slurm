@@ -22,14 +22,8 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "========================================"
 echo ""
 
-# Spack environment
-if [[ -f "$SPACK_SETUP_SCRIPT" ]]; then
-  source "$SPACK_SETUP_SCRIPT"
-  spack env activate "$SPACK_ENV_NAME" || echo "Warning: Spack activation failed"
-fi
-
-# Python virtual environment
-source .venv/bin/activate
+# Activate Python environment (auto-detects available setup)
+source scripts/activate_env.sh --auto
 
 # Disable threading for fair comparison
 unset SLURM_CPU_BIND SLURM_CPU_BIND_LIST SLURM_CPU_BIND_TYPE SLURM_CPU_BIND_VERBOSE

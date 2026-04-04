@@ -13,8 +13,20 @@ fi
 
 # Parse arguments
 PREFER_GPU=0
+AUTO_DETECT=0
+
 if [[ "$1" == "--gpu" ]]; then
   PREFER_GPU=1
+elif [[ "$1" == "--auto" ]]; then
+  AUTO_DETECT=1
+  # Auto-detect based on Slurm partition or node type
+  if [[ -n "${SLURM_JOB_PARTITION:-}" ]]; then
+    if [[ "$SLURM_JOB_PARTITION" == "gpu" ]]; then
+      PREFER_GPU=1
+    fi
+  elif hostname | grep -q "gpu"; then
+    PREFER_GPU=1
+  fi
 fi
 
 # Find repo root
