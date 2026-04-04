@@ -26,6 +26,11 @@ if [[ -f "$SPACK_SETUP_SCRIPT" ]]; then
   spack env activate "$SPACK_ENV_NAME"
 fi
 
+# Disable CPU binding to avoid conflicts
+unset SLURM_CPU_BIND SLURM_CPU_BIND_LIST SLURM_CPU_BIND_TYPE SLURM_CPU_BIND_VERBOSE
+export OMPI_MCA_hwloc_base_binding_policy=none
+export OMPI_MCA_rmaps_base_mapping_policy=slot
+
 # Create test data
 python3 << 'EOF'
 import numpy as np
