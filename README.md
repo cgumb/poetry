@@ -167,7 +167,10 @@ The CLI features:
 - ⏱️ **Performance metrics** for each GP computation
 - 💾 **Session persistence** - resume where you left off
 
-Install rich if needed: `uv pip install rich` or reinstall dependencies from `pyproject.toml`.
+Rich is included in `requirements-app.txt` and will be installed with:
+```bash
+INSTALL_APP_REQUIREMENTS=1 bash scripts/bootstrap_venv.sh
+```
 
 Streamlit app:
 
