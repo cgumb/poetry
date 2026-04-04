@@ -54,6 +54,13 @@ Optional app dependencies such as Streamlit can be installed with:
 INSTALL_APP_REQUIREMENTS=1 bash scripts/bootstrap_venv.sh
 ```
 
+Optional LLM dependencies for metadata imputation:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements-llm.txt
+```
+
 ## Canonical corpus build path
 
 The corpus foundation is now controlled by a manifest:
@@ -219,26 +226,44 @@ See `scripts/README.md` for more options and `docs/BENCHMARKING_GUIDE.md` for de
 - Visual distinction: canonical poets have darker color, larger markers, priority labeling
 
 **Missing metadata imputation** using multiple strategies:
-```bash
-# First-line matching (recommended, always safe)
-python scripts/app/impute_missing_metadata.py --poems data/poems.parquet --output data/poems_imputed.parquet
 
-# Generate LLM batch requests for remaining unknowns
+```bash
+# Step 1: First-line matching (recommended, always safe)
+python scripts/app/impute_missing_metadata.py \
+  --poems data/poems.parquet \
+  --output data/poems_imputed.parquet
+
+# Step 2: Generate LLM batch requests for remaining unknowns
 python scripts/app/impute_missing_metadata.py \
   --poems data/poems_imputed.parquet \
   --generate-llm-batch data/llm_batch_requests.jsonl
+
+# Step 3: Submit to Claude Batch API (requires anthropic CLI and API key)
+pip install -r requirements-llm.txt
+export ANTHROPIC_API_KEY='your-key'
+anthropic messages batches create --input-file data/llm_batch_requests.jsonl
+
+# Step 4: Download results when complete
+anthropic messages batches results <batch_id> > data/llm_batch_results.jsonl
+
+# Step 5: Apply results back to dataframe
+python scripts/app/apply_llm_imputation_results.py \
+  --poems data/poems_imputed.parquet \
+  --results data/llm_batch_results.jsonl \
+  --output data/poems_imputed.parquet
 ```
 
 Imputation strategies:
 1. **First-line matching**: Propagate known poets to duplicate poems (free, robust)
-2. **LLM batch API**: Claude identifies well-known poems (~$0.003 per 1000 poems with batch pricing)
+2. **LLM batch API**: Claude identifies well-known poems (~$0.003-0.005 per 1000 poems)
 
 **Key safeguards**:
 - ✅ Never re-imputes already-imputed rows
 - ✅ Only generates LLM requests for rows still needing imputation
-- ✅ Boolean flags track imputation status
+- ✅ Boolean flags (`poet_imputed`, `title_imputed`) track imputation status
+- ✅ Confidence filtering to avoid low-quality imputations
 
-See `docs/POET_SELECTION_AND_IMPUTATION.md` for details.
+See `docs/POET_SELECTION_AND_IMPUTATION.md` for complete workflow and details.
 
 ## Key docs
 

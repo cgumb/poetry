@@ -147,14 +147,84 @@ Unknown poem with style similar to Emily Dickinson's known works
 
 ### Strategy 3: LLM Batch API (Optional)
 
-**Approach**: For remaining uncertain cases, use Claude's batch API to identify poets from text.
+**Approach**: For remaining uncertain cases, use Claude's batch API to identify poets and titles from text.
 
-**Algorithm**:
-1. Generate JSONL batch file with prompts for each poem
-2. Submit to Claude batch API (50% cost reduction vs real-time)
-3. Parse JSON responses, apply only high-confidence identifications
+**Complete Workflow**:
 
-**Example prompt**:
+#### Step 1: Install Anthropic CLI (optional dependency)
+```bash
+source .venv/bin/activate
+pip install -r requirements-llm.txt
+# OR: pip install anthropic
+```
+
+#### Step 2: Generate batch request file
+```bash
+python scripts/app/impute_missing_metadata.py \
+  --poems data/poems_imputed.parquet \
+  --generate-llm-batch data/llm_batch_requests.jsonl \
+  --max-llm-requests 1000  # Optional: limit for cost control
+```
+
+**Output**:
+```
+✓ Generated 247 batch API requests in data/llm_batch_requests.jsonl
+  Estimated cost: ~$0.062
+  (Based on ~43,225 input + ~12,350 output tokens)
+```
+
+#### Step 3: Submit to Claude Batch API
+```bash
+# Set your API key
+export ANTHROPIC_API_KEY='your-api-key-here'
+
+# Submit the batch
+anthropic messages batches create --input-file data/llm_batch_requests.jsonl
+
+# Returns: batch_abc123... (save this ID)
+```
+
+#### Step 4: Check batch status
+```bash
+# Check if complete (batches typically take minutes to hours)
+anthropic messages batches retrieve batch_abc123...
+
+# Status will show: in_progress → processing → ended
+```
+
+#### Step 5: Download results
+```bash
+anthropic messages batches results batch_abc123... > data/llm_batch_results.jsonl
+```
+
+#### Step 6: Apply results to dataframe
+```bash
+python scripts/app/apply_llm_imputation_results.py \
+  --poems data/poems_imputed.parquet \
+  --results data/llm_batch_results.jsonl \
+  --output data/poems_imputed.parquet \
+  --min-confidence medium
+```
+
+**Output**:
+```
+=== Results ===
+Total LLM results processed: 247
+Parse errors: 2
+Skipped (already imputed): 0
+Skipped (low confidence): 18
+
+Applied imputations:
+  Poet only: 89
+  Title only: 34
+  Both poet and title: 104
+  Total poet imputations: 193
+  Total title imputations: 138
+
+✓ Writing updated poems to data/poems_imputed.parquet
+```
+
+**Example prompt sent to Claude**:
 ```
 Given this poem excerpt, identify the poet and title if recognizable.
 
@@ -164,42 +234,89 @@ He kindly stopped for me –
 The Carriage held but just Ourselves –
 And Immortality.
 
-[Respond with JSON: {"poet": "...", "title": "...", "confidence": "high|medium|low"}]
+If you can confidently identify this poem, respond with JSON:
+{"poet": "Emily Dickinson", "title": "Because I could not stop for Death", "confidence": "high"}
+
+Respond only with valid JSON, no other text.
 ```
 
-**Cost**: ~$0.25 per 1000 poems (using Haiku, batch pricing)
+**Cost**: ~$0.003-0.005 per 1000 poems (using Haiku with batch pricing: 50% discount)
+- Input tokens: $0.25 per 1M → $0.125 per 1M with batch
+- Output tokens: $1.25 per 1M → $0.625 per 1M with batch
 
 **Advantages**:
-- Can identify poems LLM was trained on
-- Provides title imputation as well
+- Can identify poems LLM was trained on (classic/canonical works)
+- Provides title imputation as well as poet
 - Higher accuracy than similarity for well-known poems
+- Batch API is 50% cheaper than real-time
+- Async processing doesn't block other work
 
 **Limitations**:
-- Costs money (though batch API is cheap)
+- Costs money (though very cheap with batch API)
 - Only works for poems in LLM training data
-- Requires API access and async processing
+- Requires Anthropic API access
+- Async processing (minutes to hours delay)
+- Won't work for very modern or obscure poems
+
+**Safety features**:
+- Only generates requests for rows still needing imputation
+- Won't overwrite existing `poet_imputed=True` or `title_imputed=True` rows
+- Confidence filtering (low/medium/high) to avoid bad imputations
+- Dry-run mode to preview changes before applying
 
 ### Usage
 
-**Recommended workflow** (first-line matching only):
+**Complete recommended workflow**:
+
 ```bash
-# Step 1: Run first-line matching imputation
+# Step 1: Install optional LLM dependencies (if using Claude Batch API)
+pip install -r requirements-llm.txt
+
+# Step 2: Run first-line matching imputation
 python scripts/app/impute_missing_metadata.py \
   --poems data/poems.parquet \
   --output data/poems_imputed.parquet
 
-# Step 2: Generate LLM batch file for remaining unknowns
+# Step 3: Generate LLM batch file for remaining unknowns
 python scripts/app/impute_missing_metadata.py \
   --poems data/poems_imputed.parquet \
   --generate-llm-batch data/llm_batch_requests.jsonl \
   --max-llm-requests 1000  # Optional: limit for cost control
 
-# Step 3: Submit to Claude Batch API
-# See: https://docs.anthropic.com/en/docs/build-with-claude/message-batching
+# Step 4: Submit to Claude Batch API
+export ANTHROPIC_API_KEY='your-api-key-here'
 anthropic messages batches create --input-file data/llm_batch_requests.jsonl
+# Returns: batch_abc123... (save this ID)
 
-# Step 4: After batch completes, parse results and update poems
-# (Manual step - parse the returned JSONL and update the dataframe)
+# Step 5: Check status (wait for completion)
+anthropic messages batches retrieve batch_abc123...
+
+# Step 6: Download results when complete
+anthropic messages batches results batch_abc123... > data/llm_batch_results.jsonl
+
+# Step 7: Apply results back to dataframe
+python scripts/app/apply_llm_imputation_results.py \
+  --poems data/poems_imputed.parquet \
+  --results data/llm_batch_results.jsonl \
+  --output data/poems_imputed.parquet \
+  --min-confidence medium
+```
+
+**Running the apply script standalone**:
+```bash
+# Apply with different confidence thresholds
+python scripts/app/apply_llm_imputation_results.py \
+  --poems data/poems_imputed.parquet \
+  --results data/llm_batch_results.jsonl \
+  --output data/poems_imputed.parquet \
+  --min-confidence high  # Only apply high-confidence results
+
+# Dry run to preview changes
+python scripts/app/apply_llm_imputation_results.py \
+  --poems data/poems_imputed.parquet \
+  --results data/llm_batch_results.jsonl \
+  --output data/poems_imputed.parquet \
+  --dry-run
 ```
 
 **Dry run** (see what would be imputed without writing):

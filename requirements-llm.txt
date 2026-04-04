@@ -1,0 +1,2 @@
+# Optional dependencies for LLM-based metadata imputation
+anthropic>=0.34

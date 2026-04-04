@@ -8,3 +8,4 @@ results/
 # LLM batch processing
 *_batch_requests.jsonl
 *_batch_results.jsonl
+llm_batch*.jsonl
