@@ -12,6 +12,7 @@
  */
 
 #include <mpi.h>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,11 @@ void dgemm_(const char* transa, const char* transb,
 void dtrsm_(const char* side, const char* uplo, const char* transa, const char* diag,
             const int* m, const int* n, const double* alpha,
             const double* a, const int* lda, double* b, const int* ldb);
+
+void dgemv_(const char* trans, const int* m, const int* n,
+            const double* alpha, const double* a, const int* lda,
+            const double* x, const int* incx,
+            const double* beta, double* y, const int* incy);
 }
 
 // Compute RBF kernel between query and rated points
@@ -559,11 +565,6 @@ int main(int argc, char** argv) {
                     const int incy = 1;
 
                     // Use dgemv: my_mean = k_qr^T @ alpha
-                    extern "C" void dgemv_(const char* trans, const int* m, const int* n,
-                                          const double* alpha, const double* a, const int* lda,
-                                          const double* x, const int* incx,
-                                          const double* beta, double* y, const int* incy);
-
                     dgemv_(&trans, &lda, &k_blas, &alpha_blas, k_qr.data(), &lda,
                            alpha.data(), &incx, &beta_blas, my_mean.data(), &incy);
                 }
@@ -808,11 +809,6 @@ int main(int argc, char** argv) {
                     const int lda = my_n;
                     const int incx = 1;
                     const int incy = 1;
-
-                    extern "C" void dgemv_(const char* trans, const int* m, const int* n,
-                                          const double* alpha, const double* a, const int* lda,
-                                          const double* x, const int* incx,
-                                          const double* beta, double* y, const int* incy);
 
                     dgemv_(&trans, &lda, &k_blas, &alpha_blas, k_qr.data(), &lda,
                            alpha.data(), &incx, &beta_blas, my_mean.data(), &incy);

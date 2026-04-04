@@ -101,9 +101,9 @@ def main() -> None:
         "variance": result.state.variance,
         "noise": result.state.noise,
         "log_marginal_likelihood": result.state.log_marginal_likelihood,
-        "optimization_success": optimization_result.get("success"),
+        "optimization_success": optimization_result.get("success", ""),
         "used_optimized_params": optimization_result.get("used_optimized_params", False),
-        "optimization_nit": optimization_result.get("nit"),
+        "optimization_nit": optimization_result.get("nit", ""),
         "exploit_index": result.exploit_index,
         "explore_index": result.explore_index,
     }
