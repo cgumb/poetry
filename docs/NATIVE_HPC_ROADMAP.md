@@ -53,14 +53,48 @@ Root-native kernel assembly:
 
 This removes the dense matrix file boundary without immediately changing the existing ScaLAPACK distribution path.
 
-#### Stage 1B
+####Stage 1B ✅ **COMPLETED**
 
 Distributed kernel assembly:
 
 - each rank computes the block-cyclic kernel tiles it owns directly
 - the dense kernel is never materialized on root
 
-This is the better long-term fit path.
+**Status:** Implemented and tested. See `docs/MILESTONE_1B_DESIGN.md` for design details.
+
+**Key achievements:**
+- Broadcast features (30MB) instead of scattering matrix (800MB)
+- Parallel RBF kernel assembly across all ranks
+- BLAS DGEMM optimization provides 20-40× speedup for assembly
+- 8× reduction in overhead vs centralized scatter/gather (1.3s → 0.16s)
+- Verified correct parallel execution on 2×2 process grid
+
+**Performance notes:**
+- ScaLAPACK still slower than Python for m < 5000 due to:
+  - Subprocess overhead (~160ms per call)
+  - Communication overhead in distributed Cholesky
+- Expected crossover at m > 5000-10000 with 8-16+ processes
+- Next milestone: persistent daemon to eliminate subprocess overhead
+
+#### Stage 1C (Proposed)
+
+Persistent daemon to eliminate subprocess overhead:
+
+- Launch MPI processes once, keep them alive across multiple fit/score operations
+- Python communicates via shared memory, pipes, or sockets
+- Eliminates ~160ms subprocess launch overhead per operation
+- Critical for interactive CLI where m < 5000 is common
+
+**Design considerations:**
+- Process lifetime management (when to shutdown?)
+- Error recovery and crash handling
+- State management across multiple operations
+- Integration with existing Python API
+
+**Expected benefit:**
+- For m=2000 with 4 processes: 0.5s total → 0.35s (30% improvement)
+- Makes ScaLAPACK competitive even for smaller problems
+- Enables responsive interactive experience
 
 ## Milestone 2: native score backend
 
