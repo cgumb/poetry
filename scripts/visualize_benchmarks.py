@@ -300,11 +300,15 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # Build aggregation dict based on available columns
-    agg_dict = {"fit_seconds": "mean", "score_seconds": "mean"}
+    # Use mean for Python (single config per m), min for ScaLAPACK (best config)
+    agg_dict_mean = {"fit_seconds": "mean", "score_seconds": "mean"}
+    agg_dict_min = {"fit_seconds": "min", "score_seconds": "min"}
     if has_select:
-        agg_dict["select_seconds"] = "mean"
+        agg_dict_mean["select_seconds"] = "mean"
+        agg_dict_min["select_seconds"] = "min"
     if has_optimize:
-        agg_dict["optimize_seconds"] = "mean"
+        agg_dict_mean["optimize_seconds"] = "mean"
+        agg_dict_min["optimize_seconds"] = "min"
 
     # Python breakdown
     python_df = df[df["fit_backend"] == "python"]
@@ -313,7 +317,7 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
         plt.close()
         return
 
-    python_data = python_df.groupby("m_rated").agg(agg_dict).reset_index()
+    python_data = python_df.groupby("m_rated").agg(agg_dict_mean).reset_index()
 
     if not python_data.empty:
         ax = axes[0]
@@ -321,7 +325,14 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
 
         # Stack bars based on available columns
         bottom = np.zeros(len(m_rated))
-        ax.bar(range(len(m_rated)), python_data["fit_seconds"], label="Fit", alpha=0.8)
+
+        if has_optimize and "optimize_seconds" in python_data.columns:
+            opt_times = python_data["optimize_seconds"].values
+            if np.any(opt_times > 0.01):  # Only show if non-negligible
+                ax.bar(range(len(m_rated)), opt_times, bottom=bottom, label="Optimize HP", alpha=0.8)
+                bottom += opt_times
+
+        ax.bar(range(len(m_rated)), python_data["fit_seconds"], bottom=bottom, label="Fit", alpha=0.8)
         bottom += python_data["fit_seconds"].values
 
         if "score_seconds" in python_data.columns:
@@ -339,13 +350,13 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
         ax.legend()
         ax.grid(True, alpha=0.3, axis="y")
 
-    # ScaLAPACK breakdown
+    # ScaLAPACK breakdown (use MIN to show best configuration)
     scalapack_df = df[df["fit_backend"] == "native_reference"]
     if scalapack_df.empty:
         # Hide second subplot if no data
         axes[1].set_visible(False)
     else:
-        scalapack_data = scalapack_df.groupby("m_rated").agg(agg_dict).reset_index()
+        scalapack_data = scalapack_df.groupby("m_rated").agg(agg_dict_min).reset_index()
 
         if not scalapack_data.empty:
             ax = axes[1]
@@ -353,7 +364,14 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
 
             # Stack bars based on available columns
             bottom = np.zeros(len(m_rated))
-            ax.bar(range(len(m_rated)), scalapack_data["fit_seconds"], label="Fit", alpha=0.8)
+
+            if has_optimize and "optimize_seconds" in scalapack_data.columns:
+                opt_times = scalapack_data["optimize_seconds"].values
+                if np.any(opt_times > 0.01):  # Only show if non-negligible
+                    ax.bar(range(len(m_rated)), opt_times, bottom=bottom, label="Optimize HP", alpha=0.8)
+                    bottom += opt_times
+
+            ax.bar(range(len(m_rated)), scalapack_data["fit_seconds"], bottom=bottom, label="Fit", alpha=0.8)
             bottom += scalapack_data["fit_seconds"].values
 
             if "score_seconds" in scalapack_data.columns:
@@ -367,7 +385,7 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
             ax.set_xticklabels([int(x) for x in m_rated])
             ax.set_xlabel("Problem Size (m_rated)", fontsize=12)
             ax.set_ylabel("Time (seconds)", fontsize=12)
-            ax.set_title("ScaLAPACK Time Breakdown", fontsize=14, fontweight="bold")
+            ax.set_title("ScaLAPACK Time Breakdown (Best Config)", fontsize=14, fontweight="bold")
             ax.legend()
             ax.grid(True, alpha=0.3, axis="y")
 
