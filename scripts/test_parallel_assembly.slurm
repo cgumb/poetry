@@ -60,7 +60,8 @@ echo ""
 echo "Running with 4 processes to verify parallel assembly:"
 echo ""
 
-mpirun -np 4 native/build/scalapack_gp_fit \
+# Use mpirun flags to explicitly disable binding
+mpirun -np 4 --bind-to none --map-by slot native/build/scalapack_gp_fit \
   --input-meta /tmp/test_parallel/input_meta.json \
   --matrix-bin /tmp/test_parallel/features.bin \
   --rhs-bin /tmp/test_parallel/targets.bin \
