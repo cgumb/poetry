@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -p general
 #SBATCH -N1
-#SBATCH -n8
+#SBATCH -n16
 #SBATCH -t 01:00:00
 #SBATCH -J blocksize-sweep
 #SBATCH -o results/blocksize-sweep-%j.out
