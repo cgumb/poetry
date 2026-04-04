@@ -24,25 +24,38 @@
 #include <errno.h>
 #include <signal.h>
 
-// Forward declarations from scalapack_gp_fit.cpp
-extern "C" {
-void run_scalapack_distributed(
-    const double* x,
-    const double* y,
-    int m,
+// Forward declaration from scalapack_gp_fit.cpp
+struct NativeResult {
+    bool implemented = false;
+    std::string backend = "unknown";
+    std::string requested_backend = "auto";
+    std::string message;
+    int info_potrf = -1;
+    int info_potrs = -1;
+    double factor_seconds = 0.0;
+    double solve_seconds = 0.0;
+    double gather_seconds = 0.0;
+    double total_seconds = 0.0;
+    double logdet = 0.0;
+    std::vector<double> alpha;
+    std::vector<double> chol;
+};
+
+#ifdef HAVE_SCALAPACK
+NativeResult run_scalapack_distributed(
+    std::size_t n,
+    int rank,
+    int size,
+    const std::vector<double>& x_rated_root,
+    const std::vector<double>& rhs_root,
     int d,
     double length_scale,
     double variance,
     double noise,
-    int nprow,
-    int npcol,
     int block_size,
-    double* alpha_out,
-    double* L_factor_out,
-    double* log_marginal_likelihood_out,
-    double* timing_out
+    MPI_Comm comm
 );
-}
+#endif
 
 volatile sig_atomic_t shutdown_requested = 0;
 
@@ -302,43 +315,65 @@ int main(int argc, char** argv) {
                 continue;
             }
 
-            // Prepare output buffers
-            std::vector<double> alpha(req.m);
-            std::vector<double> L_factor(req.m * req.m);
-            double log_marg_lik = 0.0;
-            double timing[4] = {0.0};
+            fprintf(stderr, "[Daemon] Running fit: m=%d, d=%d, block_size=%d\n",
+                    req.m, req.d, req.block_size);
 
-            fprintf(stderr, "[Daemon] Running fit: m=%d, d=%d, nprow=%d, npcol=%d, block_size=%d\n",
-                    req.m, req.d, req.nprow, req.npcol, req.block_size);
+            // Get rank/size for the fit
+            int fit_rank, fit_size;
+            MPI_Comm_rank(MPI_COMM_WORLD, &fit_rank);
+            MPI_Comm_size(MPI_COMM_WORLD, &fit_size);
 
             // Run fit
-            run_scalapack_distributed(
-                x.data(), y.data(),
-                req.m, req.d,
+#ifdef HAVE_SCALAPACK
+            NativeResult result = run_scalapack_distributed(
+                static_cast<std::size_t>(req.m),
+                fit_rank, fit_size,
+                x, y,
+                req.d,
                 req.length_scale, req.variance, req.noise,
-                req.nprow, req.npcol, req.block_size,
-                alpha.data(), L_factor.data(),
-                &log_marg_lik, timing
+                req.block_size,
+                MPI_COMM_WORLD
             );
 
-            fprintf(stderr, "[Daemon] Fit complete: fit_time=%.4fs, total_time=%.4fs\n",
-                    timing[0], timing[3]);
+            double log_marg_lik = result.logdet;
+            double fit_time = result.factor_seconds;
+            double total_time = result.total_seconds;
 
-            // Write outputs
-            if (!write_binary_file(req.alpha_out_path, alpha.data(), req.m)) {
+            fprintf(stderr, "[Daemon] Fit complete: fit_time=%.4fs, total_time=%.4fs\n",
+                    fit_time, total_time);
+#else
+            fprintf(stderr, "[Daemon] ERROR: Built without ScaLAPACK support\n");
+            DaemonResponse resp;
+            resp.status = 1;
+            resp.message = "Daemon built without ScaLAPACK support";
+            resp.log_marginal_likelihood = 0.0;
+            resp.fit_seconds = 0.0;
+            resp.total_seconds = 0.0;
+
+            int resp_fd = open(response_pipe, O_WRONLY);
+            if (resp_fd >= 0) {
+                std::string resp_json = create_response_json(resp);
+                write(resp_fd, resp_json.c_str(), resp_json.length());
+                close(resp_fd);
+            }
+            continue;
+#endif
+
+            // Write outputs (only rank 0 has the results)
+            if (!write_binary_file(req.alpha_out_path, result.alpha.data(), req.m)) {
                 fprintf(stderr, "[Daemon] Failed to write alpha\n");
             }
-            if (!write_binary_file(req.L_out_path, L_factor.data(), req.m * req.m)) {
+            if (!write_binary_file(req.L_out_path, result.chol.data(), req.m * req.m)) {
                 fprintf(stderr, "[Daemon] Failed to write L factor\n");
             }
 
             // Send response
             DaemonResponse resp;
-            resp.status = 0;
-            resp.message = "Success";
+            resp.status = (result.info_potrf == 0 && result.info_potrs == 0) ? 0 : 1;
+            resp.message = result.info_potrf == 0 ? "Success" : "Factorization failed";
             resp.log_marginal_likelihood = log_marg_lik;
-            resp.fit_seconds = timing[0];
-            resp.total_seconds = timing[3];
+            resp.fit_seconds = fit_time;
+            resp.total_seconds = total_time;
 
             int resp_fd = open(response_pipe, O_WRONLY);
             if (resp_fd >= 0) {
@@ -365,14 +400,24 @@ int main(int argc, char** argv) {
             MPI_Bcast(&req.npcol, 1, MPI_INT, 0, MPI_COMM_WORLD);
             MPI_Bcast(&req.block_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
+            // Get rank/size
+            int fit_rank, fit_size;
+            MPI_Comm_rank(MPI_COMM_WORLD, &fit_rank);
+            MPI_Comm_size(MPI_COMM_WORLD, &fit_size);
+
             // Participate in computation (data will be broadcast inside run_scalapack_distributed)
+            std::vector<double> empty_x, empty_y;
+#ifdef HAVE_SCALAPACK
             run_scalapack_distributed(
-                nullptr, nullptr,  // Data broadcast inside
-                req.m, req.d,
+                static_cast<std::size_t>(req.m),
+                fit_rank, fit_size,
+                empty_x, empty_y,  // Will be broadcast inside
+                req.d,
                 req.length_scale, req.variance, req.noise,
-                req.nprow, req.npcol, req.block_size,
-                nullptr, nullptr, nullptr, nullptr  // Only root needs outputs
+                req.block_size,
+                MPI_COMM_WORLD
             );
+#endif
         }
 
         MPI_Barrier(MPI_COMM_WORLD);

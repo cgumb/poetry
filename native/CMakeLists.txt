@@ -36,6 +36,7 @@ if(POETRY_ENABLE_SCALAPACK)
   endif()
 endif()
 
+# Build main executable
 add_executable(scalapack_gp_fit scalapack_gp_fit_entry.cpp)
 target_link_libraries(scalapack_gp_fit PRIVATE MPI::MPI_CXX ${BLAS_LIBRARIES})
 
@@ -50,7 +51,10 @@ else()
 endif()
 
 # Build persistent daemon (Milestone 1C)
+# Note: daemon needs access to run_scalapack_distributed but not main()
+# Solution: Build scalapack_gp_fit.cpp with DAEMON_BUILD flag to exclude main
 add_executable(scalapack_daemon scalapack_daemon.cpp scalapack_gp_fit.cpp)
+target_compile_definitions(scalapack_daemon PRIVATE DAEMON_BUILD=1)
 target_link_libraries(scalapack_daemon PRIVATE MPI::MPI_CXX ${BLAS_LIBRARIES})
 if(POETRY_SCALAPACK_FOUND)
   target_link_libraries(scalapack_daemon PRIVATE ${POETRY_SCALAPACK_LIBRARIES})

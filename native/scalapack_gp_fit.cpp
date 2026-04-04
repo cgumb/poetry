@@ -1199,6 +1199,7 @@ NativeResult run_scalapack_distributed(
 }
 #endif
 
+#ifndef DAEMON_BUILD
 int main(int argc, char** argv) {
   MPI_Init(&argc, &argv);
   int rank = 0;
@@ -1264,3 +1265,4 @@ int main(int argc, char** argv) {
   MPI_Finalize();
   return exit_code;
 }
+#endif  // DAEMON_BUILD
