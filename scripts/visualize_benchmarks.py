@@ -351,12 +351,12 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
     bar_width = 0.35
     x_pos = np.arange(n_sizes)
 
-    # Define colors for each component
+    # Define colors for each component (using matplotlib's default color cycle)
     colors = {
-        'optimize': '#ff9999',
-        'fit': '#66b3ff',
-        'score': '#99ff99',
-        'select': '#ffcc99'
+        'optimize': 'C3',  # Red
+        'fit': 'C0',       # Blue
+        'score': 'C2',     # Green
+        'select': 'C1'     # Orange
     }
 
     # Plot Python bars (left side of each group)
@@ -365,31 +365,36 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
     # Extract Python data aligned with m_rated_values
     python_dict = {row['m_rated']: row for _, row in python_data.iterrows()}
 
+    # Track which components are actually plotted for legend
+    has_optimize_data = False
+
     # Optimize time
     if has_optimize:
         opt_times = np.array([python_dict.get(m, {}).get('optimize_seconds', 0) for m in m_rated_values])
         if np.any(opt_times > 0.01):
             ax.bar(x_pos - bar_width/2, opt_times, bar_width, bottom=python_bottom,
-                   label='Optimize HP', alpha=0.8, color=colors['optimize'])
+                   label='Optimize HP (Python)', color=colors['optimize'], edgecolor='black', linewidth=0.5)
             python_bottom += opt_times
+            has_optimize_data = True
 
     # Fit time
     fit_times = np.array([python_dict.get(m, {}).get('fit_seconds', 0) for m in m_rated_values])
     ax.bar(x_pos - bar_width/2, fit_times, bar_width, bottom=python_bottom,
-           label='Fit', alpha=0.8, color=colors['fit'])
+           label='Fit (Python)', color=colors['fit'], edgecolor='black', linewidth=0.5)
     python_bottom += fit_times
 
     # Score time
     score_times = np.array([python_dict.get(m, {}).get('score_seconds', 0) for m in m_rated_values])
     ax.bar(x_pos - bar_width/2, score_times, bar_width, bottom=python_bottom,
-           label='Score', alpha=0.8, color=colors['score'])
+           label='Score (Python)', color=colors['score'], edgecolor='black', linewidth=0.5)
     python_bottom += score_times
 
     # Select time
     if has_select:
         select_times = np.array([python_dict.get(m, {}).get('select_seconds', 0) for m in m_rated_values])
-        ax.bar(x_pos - bar_width/2, select_times, bar_width, bottom=python_bottom,
-               label='Select', alpha=0.8, color=colors['select'])
+        if np.any(select_times > 0.001):
+            ax.bar(x_pos - bar_width/2, select_times, bar_width, bottom=python_bottom,
+                   label='Select (Python)', color=colors['select'], edgecolor='black', linewidth=0.5)
 
     # Plot ScaLAPACK bars (right side of each group) if available
     if has_scalapack:
@@ -401,26 +406,31 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
             opt_times = np.array([scalapack_dict.get(m, {}).get('optimize_seconds', 0) for m in m_rated_values])
             if np.any(opt_times > 0.01):
                 ax.bar(x_pos + bar_width/2, opt_times, bar_width, bottom=scalapack_bottom,
-                       alpha=0.8, color=colors['optimize'])
+                       label='Optimize HP (ScaLAPACK)', color=colors['optimize'],
+                       edgecolor='black', linewidth=0.5, hatch='///')
                 scalapack_bottom += opt_times
 
         # Fit time
         fit_times = np.array([scalapack_dict.get(m, {}).get('fit_seconds', 0) for m in m_rated_values])
         ax.bar(x_pos + bar_width/2, fit_times, bar_width, bottom=scalapack_bottom,
-               alpha=0.8, color=colors['fit'])
+               label='Fit (ScaLAPACK)', color=colors['fit'],
+               edgecolor='black', linewidth=0.5, hatch='///')
         scalapack_bottom += fit_times
 
         # Score time
         score_times = np.array([scalapack_dict.get(m, {}).get('score_seconds', 0) for m in m_rated_values])
         ax.bar(x_pos + bar_width/2, score_times, bar_width, bottom=scalapack_bottom,
-               alpha=0.8, color=colors['score'])
+               label='Score (ScaLAPACK)', color=colors['score'],
+               edgecolor='black', linewidth=0.5, hatch='///')
         scalapack_bottom += score_times
 
         # Select time
         if has_select:
             select_times = np.array([scalapack_dict.get(m, {}).get('select_seconds', 0) for m in m_rated_values])
-            ax.bar(x_pos + bar_width/2, select_times, bar_width, bottom=scalapack_bottom,
-                   alpha=0.8, color=colors['select'])
+            if np.any(select_times > 0.001):
+                ax.bar(x_pos + bar_width/2, select_times, bar_width, bottom=scalapack_bottom,
+                       label='Select (ScaLAPACK)', color=colors['select'],
+                       edgecolor='black', linewidth=0.5, hatch='///')
 
     # Formatting
     ax.set_xlabel("Problem Size (m_rated)", fontsize=12)
@@ -432,14 +442,8 @@ def plot_detailed_breakdown(df: pd.DataFrame, output_dir: Path, fmt: str, dpi: i
     ax.set_xticks(x_pos)
     ax.set_xticklabels([f'{int(m):,}' for m in m_rated_values])
 
-    # Add legend (only showing component types, not backends)
-    ax.legend(loc='upper left')
-
-    # Add text labels to distinguish backends
-    if has_scalapack:
-        ax.text(0.02, 0.98, 'Left: Python  |  Right: ScaLAPACK',
-                transform=ax.transAxes, fontsize=10, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    # Add legend with better placement (solid = Python, striped = ScaLAPACK)
+    ax.legend(loc='upper left', fontsize=9, framealpha=0.9)
 
     ax.grid(True, alpha=0.3, axis='y')
 
