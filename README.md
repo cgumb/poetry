@@ -275,21 +275,20 @@ python scripts/visualize_benchmarks.py results/blocksize_sweep_*.csv
 
 ### Scoring Benchmarks (Posterior prediction)
 
-**GPU vs CPU scoring** (requires GPU node):
+**Comprehensive scoring comparison** (requires GPU node):
 
 ```bash
 sbatch scripts/gpu_scoring_bench.slurm
 ```
 
-Tests: m ∈ {100, 500, 1k, 2k, 5k, 10k, 15k, 20k} with n=25k candidates
+Tests **all three backends** for each m value:
+- CPU (1 thread) - baseline
+- CPU (8 threads) - multi-threaded BLAS
+- GPU (CuPy/CUDA) - CUDA acceleration
 
-**CPU-only scoring comparison** (general partition):
+Problem sizes: m ∈ {100, 500, 1k, 2k, 5k, 10k, 15k, 20k} with n=25k candidates
 
-```bash
-sbatch scripts/scoring_comparison.slurm
-```
-
-Compares single-threaded vs multi-threaded CPU scoring.
+This single script provides complete CPU vs GPU comparison including threading effects.
 
 **Custom scoring benchmark:**
 
@@ -423,8 +422,7 @@ scripts/
   quick_bench_test.slurm      # Quick benchmark (m=100-2000)
   large_scale_bench.slurm     # Overnight fit benchmark (m=2k-30k)
   blocksize_sweep.slurm       # Block size optimization sweep
-  gpu_scoring_bench.slurm     # GPU scoring benchmark (m up to 20k)
-  scoring_comparison.slurm    # CPU scoring comparison (1 vs 8 threads)
+  gpu_scoring_bench.slurm     # GPU vs CPU scoring comparison (all backends)
   bootstrap_env.sh            # Unified environment setup (CPU or GPU)
   activate_env.sh             # Auto-detecting environment activation
   app/
