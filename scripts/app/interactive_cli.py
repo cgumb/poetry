@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from dataclasses import dataclass, asdict
 
 import numpy as np
 import pandas as pd
@@ -10,13 +11,35 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich.prompt import Prompt
+from rich.prompt import Prompt, Confirm
 from rich import box
 
 from poetry_gp.backends.blocked import run_blocked_step
 from poetry_gp.backends.scoring import try_create_daemon_client
+from poetry_gp.backends.gpu_scoring import is_gpu_available
 
 console = Console()
+
+
+@dataclass
+class UserConfig:
+    """User configuration for GP recommendation system."""
+    exploitation_strategy: str = "max_mean"
+    exploration_strategy: str = "max_variance"
+    ucb_beta: float = 2.0
+    score_backend: str = "python"
+    optimize_hyperparameters: bool = False
+    optimizer_maxiter: int = 50
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> UserConfig:
+        # Filter out unknown keys for forward compatibility
+        known_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in d.items() if k in known_fields}
+        return cls(**filtered)
 
 
 TEXT_CANDIDATES = ["text", "poem", "content", "body"]
@@ -42,18 +65,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--noise", type=float, default=1e-3)
     parser.add_argument("--optimize-hyperparameters", action="store_true")
     parser.add_argument("--optimizer-maxiter", type=int, default=50)
-    parser.add_argument("--score-backend", type=str, default="python",
-                        choices=["python", "daemon", "auto", "gpu"],
-                        help="Scoring backend (default: python). GPU provides 2-10x speedup for large m. Daemon has high overhead for typical CLI usage.")
+    parser.add_argument("--exploitation-strategy", type=str, default=None,
+                        choices=["max_mean", "ucb", "lcb", "thompson"],
+                        help="Exploitation strategy (default: max_mean, set via config menu).")
+    parser.add_argument("--exploration-strategy", type=str, default=None,
+                        choices=["max_variance", "spatial_variance", "expected_improvement"],
+                        help="Exploration strategy (default: max_variance, set via config menu).")
+    parser.add_argument("--ucb-beta", type=float, default=None,
+                        help="Confidence parameter for UCB/LCB (default: 2.0, set via config menu).")
+    parser.add_argument("--score-backend", type=str, default=None,
+                        choices=["python", "gpu"],
+                        help="Scoring backend (default: python, set via config menu).")
     parser.add_argument("--daemon-nprocs", type=int, default=4,
                         help="Number of MPI processes for daemon scoring")
     parser.add_argument("--daemon-launcher", type=str, default="mpirun",
                         help="MPI launcher for daemon (mpirun, srun, etc.)")
-    parser.add_argument("--exploration-strategy", type=str, default="max_variance",
-                        choices=["max_variance", "variance_reduction"],
-                        help="Exploration strategy (default: max_variance). "
-                             "max_variance: Pick point with highest uncertainty. "
-                             "variance_reduction: Pick point that would reduce total uncertainty the most (slower but better exploration).")
     return parser.parse_args()
 
 
@@ -86,26 +112,39 @@ def show_poem(df: pd.DataFrame, idx: int, title_col: str, poet_col: str, text_co
     console.print(panel)
 
 
-def save_session(path: Path, current_idx: int | None, rated_indices: list[int], ratings: list[float]) -> None:
+def save_session(
+    path: Path,
+    current_idx: int | None,
+    rated_indices: list[int],
+    ratings: list[float],
+    config: UserConfig | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "current_index": current_idx,
         "rated_indices": rated_indices,
         "ratings": ratings,
     }
+    if config is not None:
+        payload["config"] = config.to_dict()
     path.write_text(json.dumps(payload, indent=2))
 
 
-def load_session(path: Path) -> tuple[int | None, list[int], list[float]]:
+def load_session(path: Path) -> tuple[int | None, list[int], list[float], UserConfig]:
     if not path.exists():
-        return None, [], []
+        return None, [], [], UserConfig()
     payload = json.loads(path.read_text())
     current_index = payload.get("current_index")
     rated_indices = [int(x) for x in payload.get("rated_indices", [])]
     ratings = [float(x) for x in payload.get("ratings", [])]
     if len(rated_indices) != len(ratings):
         raise ValueError(f"Session file {path} has mismatched rated_indices and ratings lengths")
-    return current_index, rated_indices, ratings
+
+    # Load config if present (for backward compatibility, use defaults if missing)
+    config_dict = payload.get("config", {})
+    config = UserConfig.from_dict(config_dict) if config_dict else UserConfig()
+
+    return current_index, rated_indices, ratings, config
 
 
 def find_rating_files(data_dir: Path) -> list[Path]:
@@ -216,6 +255,113 @@ def search_poems(df: pd.DataFrame, query: str, title_col: str, poet_col: str, te
     return [int(i) for i in matches]
 
 
+def show_config_menu(config: UserConfig) -> UserConfig:
+    """Interactive configuration menu."""
+    console.print()
+    console.print(Panel(
+        "[bold cyan]Configuration Settings[/bold cyan]\n\n"
+        "Adjust recommendation strategies and system preferences",
+        title="⚙️  Config",
+        border_style="cyan",
+        box=box.DOUBLE
+    ))
+
+    # Exploitation strategy
+    console.print("\n[bold yellow]Exploitation Strategy[/bold yellow] (for 'exploit' command):")
+    console.print("  [dim]How to recommend poems you'll likely enjoy[/dim]\n")
+
+    exploit_choices = {
+        "1": ("max_mean", "Max Mean", "Highest predicted rating (fast, but risky if uncertain)"),
+        "2": ("ucb", "UCB (Upper Confidence Bound)", "Balance mean + uncertainty (recommended, β controls confidence)"),
+        "3": ("lcb", "LCB (Lower Confidence Bound)", "Conservative/pessimistic recommendations"),
+        "4": ("thompson", "Thompson Sampling", "Random sample from posterior (diverse recommendations)"),
+    }
+
+    for key, (strategy, name, desc) in exploit_choices.items():
+        marker = "●" if config.exploitation_strategy == strategy else "○"
+        console.print(f"  {marker} [{key}] {name}")
+        console.print(f"      [dim]{desc}[/dim]")
+
+    exploit_choice = Prompt.ask("Select exploitation strategy", default="2" if config.exploitation_strategy == "ucb" else "1")
+    if exploit_choice in exploit_choices:
+        config.exploitation_strategy = exploit_choices[exploit_choice][0]
+
+    # UCB beta parameter (only if UCB/LCB selected)
+    if config.exploitation_strategy in ("ucb", "lcb"):
+        console.print(f"\n[bold yellow]Confidence Parameter (β)[/bold yellow]: [dim]Currently {config.ucb_beta}[/dim]")
+        console.print("  β=1.0: More exploitation (prefer high mean)")
+        console.print("  β=2.0: Balanced (recommended)")
+        console.print("  β=3.0: More exploration (prefer uncertain items)")
+        beta_str = Prompt.ask("Enter β", default=str(config.ucb_beta))
+        try:
+            config.ucb_beta = float(beta_str)
+        except ValueError:
+            console.print("[red]Invalid number, keeping current value[/red]")
+
+    # Exploration strategy
+    console.print("\n[bold magenta]Exploration Strategy[/bold magenta] (for 'explore' command):")
+    console.print("  [dim]How to discover new poems and learn your preferences[/dim]\n")
+
+    explore_choices = {
+        "1": ("max_variance", "Max Variance (minimize entropy)", "Pick most uncertain poem (fast, info-theoretic optimal)"),
+        "2": ("spatial_variance", "Spatial Diverse (minimize mean variance)", "Reduce uncertainty across all poems (slow O(n²), diverse exploration)"),
+        "3": ("expected_improvement", "Expected Improvement", "Balance finding great poems + learning (classic Bayesian optimization)"),
+    }
+
+    for key, (strategy, name, desc) in explore_choices.items():
+        marker = "●" if config.exploration_strategy == strategy else "○"
+        console.print(f"  {marker} [{key}] {name}")
+        console.print(f"      [dim]{desc}[/dim]")
+
+    explore_choice = Prompt.ask("Select exploration strategy", default="1")
+    if explore_choice in explore_choices:
+        config.exploration_strategy = explore_choices[explore_choice][0]
+
+    # Score backend
+    console.print("\n[bold green]Scoring Backend[/bold green]:")
+    console.print("  [dim]How to compute predictions[/dim]\n")
+
+    has_gpu = is_gpu_available()
+    backend_choices = {
+        "1": ("python", "Python (CPU)", "Standard NumPy/SciPy (always available)"),
+        "2": ("gpu", "GPU (CUDA)", f"CuPy acceleration ({'available' if has_gpu else 'NOT AVAILABLE'}), 2-10x faster for large m"),
+    }
+
+    for key, (backend, name, desc) in backend_choices.items():
+        marker = "●" if config.score_backend == backend else "○"
+        available = "" if (backend != "gpu" or has_gpu) else " [red](unavailable)[/red]"
+        console.print(f"  {marker} [{key}] {name}{available}")
+        console.print(f"      [dim]{desc}[/dim]")
+
+    backend_choice = Prompt.ask("Select backend", default="1")
+    if backend_choice in backend_choices:
+        selected_backend = backend_choices[backend_choice][0]
+        if selected_backend == "gpu" and not has_gpu:
+            console.print("[red]GPU not available, keeping Python backend[/red]")
+        else:
+            config.score_backend = selected_backend
+
+    # Hyperparameter optimization
+    console.print("\n[bold blue]Hyperparameter Optimization[/bold blue]:")
+    current_status = "ON" if config.optimize_hyperparameters else "OFF"
+    console.print(f"  Currently: [bold]{current_status}[/bold]")
+    console.print("  [dim]Automatically tune kernel parameters (length_scale, variance, noise)[/dim]")
+    console.print("  [dim]Improves fit quality but adds ~0.5-2s overhead per recommendation[/dim]")
+
+    config.optimize_hyperparameters = Confirm.ask("Enable hyperparameter optimization?", default=config.optimize_hyperparameters)
+
+    if config.optimize_hyperparameters:
+        console.print(f"\n  Max iterations: [dim]Currently {config.optimizer_maxiter}[/dim]")
+        maxiter_str = Prompt.ask("Enter max iterations", default=str(config.optimizer_maxiter))
+        try:
+            config.optimizer_maxiter = int(maxiter_str)
+        except ValueError:
+            console.print("[red]Invalid number, keeping current value[/red]")
+
+    console.print("\n[green]✓ Configuration updated![/green]")
+    return config
+
+
 def prompt_search(df: pd.DataFrame, title_col: str, poet_col: str, text_col: str) -> int | None:
     query = Prompt.ask("🔍 [bold cyan]Search title/poet/text[/bold cyan]")
     matches = search_poems(df, query, title_col, poet_col, text_col)
@@ -285,7 +431,7 @@ def main() -> None:
     console.print()
     data_dir = args.session_file.parent
     session_file = select_or_create_user(data_dir)
-    saved_current, rated_indices, ratings = load_session(session_file)
+    saved_current, rated_indices, ratings, user_config = load_session(session_file)
     rng = np.random.default_rng(args.seed)
     if saved_current is not None and 0 <= saved_current < len(poems):
         current_idx = int(saved_current)
@@ -293,6 +439,20 @@ def main() -> None:
     else:
         current_idx = int(rng.integers(len(poems)))
         console.print(f"[cyan]Starting new session[/cyan]")
+
+    # Override config with command-line args if provided
+    if args.exploitation_strategy:
+        user_config.exploitation_strategy = args.exploitation_strategy
+    if args.exploration_strategy:
+        user_config.exploration_strategy = args.exploration_strategy
+    if args.ucb_beta is not None:
+        user_config.ucb_beta = args.ucb_beta
+    if args.score_backend:
+        user_config.score_backend = args.score_backend
+    if args.optimize_hyperparameters:
+        user_config.optimize_hyperparameters = True
+    if args.optimizer_maxiter:
+        user_config.optimizer_maxiter = args.optimizer_maxiter
 
     current_length_scale = float(args.length_scale)
     current_variance = float(args.variance)
@@ -321,9 +481,10 @@ def main() -> None:
         "[yellow bold]n[/yellow bold]eutral   [dim]|[/dim]   "
         "[red bold]d[/red bold]islike   [dim]|[/dim]   "
         "[cyan bold]e[/cyan bold]xploit   [dim]|[/dim]   "
-        "[magenta bold]x[/magenta bold]plore   [dim]|[/dim]   "
+        "[magenta bold]x[/magenta bold]plore\n"
         "[blue bold]s[/blue bold]earch   [dim]|[/dim]   "
         "[yellow bold]r[/yellow bold]ated   [dim]|[/dim]   "
+        "[cyan bold]c[/cyan bold]onfig   [dim]|[/dim]   "
         "[red bold]q[/red bold]uit",
         title="🎮 Commands",
         border_style="dim",
@@ -338,16 +499,21 @@ def main() -> None:
             cmd = Prompt.ask("Choose action", default="").strip().lower()
 
             if cmd == "q":
-                save_session(session_file, current_idx, rated_indices, ratings)
+                save_session(session_file, current_idx, rated_indices, ratings, user_config)
                 console.print(f"[green]✓[/green] Saved session to [bold]{session_file}[/bold]")
                 break
+
+            if cmd == "c":
+                user_config = show_config_menu(user_config)
+                save_session(session_file, current_idx, rated_indices, ratings, user_config)
+                continue
 
             if cmd in {"l", "n", "d"}:
                 if current_idx not in rated_indices:
                     rated_indices.append(current_idx)
                     rating_value = {"l": 1.0, "n": 0.0, "d": -1.0}[cmd]
                     ratings.append(rating_value)
-                    save_session(session_file, current_idx, rated_indices, ratings)
+                    save_session(session_file, current_idx, rated_indices, ratings, user_config)
 
                     # Color-coded feedback
                     if rating_value > 0:
@@ -368,7 +534,7 @@ def main() -> None:
                 selected = prompt_search(poems, title_col, poet_col, text_col)
                 if selected is not None:
                     current_idx = selected
-                    save_session(session_file, current_idx, rated_indices, ratings)
+                    save_session(session_file, current_idx, rated_indices, ratings, user_config)
                 continue
 
             if cmd not in {"e", "x"}:
@@ -387,21 +553,23 @@ def main() -> None:
                     length_scale=current_length_scale,
                     variance=current_variance,
                     noise=current_noise,
-                    optimize_hyperparameters=args.optimize_hyperparameters,
-                    optimizer_maxiter=args.optimizer_maxiter,
-                    score_backend=args.score_backend,
-                    exploration_strategy=args.exploration_strategy,
+                    optimize_hyperparameters=user_config.optimize_hyperparameters,
+                    optimizer_maxiter=user_config.optimizer_maxiter,
+                    score_backend=user_config.score_backend,
+                    exploitation_strategy=user_config.exploitation_strategy,
+                    exploration_strategy=user_config.exploration_strategy,
+                    ucb_beta=user_config.ucb_beta,
                     daemon_client=daemon_client,
                     daemon_nprocs=args.daemon_nprocs,
                     daemon_launcher=args.daemon_launcher,
                 )
 
-            if args.optimize_hyperparameters:
+            if user_config.optimize_hyperparameters:
                 current_length_scale = float(result.state.length_scale)
                 current_variance = float(result.state.variance)
                 current_noise = float(result.state.noise)
             current_idx = result.exploit_index if cmd == "e" else result.explore_index
-            save_session(session_file, current_idx, rated_indices, ratings)
+            save_session(session_file, current_idx, rated_indices, ratings, user_config)
 
             # Create timing and parameter info panels
             timing_table = Table(show_header=False, box=None, padding=(0, 1))
@@ -421,12 +589,23 @@ def main() -> None:
             if result.state.log_marginal_likelihood is not None:
                 param_table.add_row("Log marginal ℒ", f"{result.state.log_marginal_likelihood:.6f}")
 
-            # Show exploration strategy if user selected explore
-            if cmd == "x":
-                strategy_display = {
+            # Show active strategy
+            if cmd == "e":
+                strategy_names = {
+                    "max_mean": "Max Mean",
+                    "ucb": f"UCB (β={user_config.ucb_beta:.1f})",
+                    "lcb": f"LCB (β={user_config.ucb_beta:.1f})",
+                    "thompson": "Thompson Sampling"
+                }
+                strategy_display = strategy_names.get(user_config.exploitation_strategy, user_config.exploitation_strategy)
+                param_table.add_row("Exploit strategy", strategy_display)
+            else:  # cmd == "x"
+                strategy_names = {
                     "max_variance": "Max Variance",
-                    "variance_reduction": "Variance Reduction"
-                }.get(args.exploration_strategy, args.exploration_strategy)
+                    "spatial_variance": "Spatial Diverse",
+                    "expected_improvement": "Expected Improvement"
+                }
+                strategy_display = strategy_names.get(user_config.exploration_strategy, user_config.exploration_strategy)
                 param_table.add_row("Explore strategy", strategy_display)
 
             console.print()

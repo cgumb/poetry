@@ -5,6 +5,7 @@ from time import perf_counter
 from pathlib import Path
 
 import numpy as np
+from scipy.stats import norm
 
 from ..gp_exact import GPState, fit_exact_gp, predict_block
 from ..kernel import rbf_kernel
@@ -32,27 +33,30 @@ class BlockedStepResult:
     state: GPState
 
 
-def _compute_variance_reduction_scores(
+def _compute_spatial_variance_reduction_scores(
     embeddings: np.ndarray,
     variance_arr: np.ndarray,
     state: GPState,
     excluded_mask: np.ndarray,
 ) -> np.ndarray:
     """
-    Compute expected variance reduction for each candidate.
+    Compute spatial variance reduction for each candidate.
 
-    This measures how much total uncertainty would be reduced by observing each point.
+    This measures how much total uncertainty would be reduced by observing each point,
+    considering spatial correlation across ALL candidates.
 
     For a GP, observing y* at x* updates the posterior variance at another point x_i as:
         σ²_new(x_i) = σ²(x_i) - k(x_i, x*)² / (σ²(x*) + σ_n²)
 
     The total expected variance reduction from observing x* is:
-        VR(x*) = Σ_i k(x_i, x*)² / (σ²(x*) + σ_n²)
+        SVR(x*) = Σ_i k(x_i, x*)² / (σ²(x*) + σ_n²)
 
-    This differs from max_variance by considering spatial correlation.
+    This differs from max_variance (entropy reduction) by:
+    - max_variance: maximizes log(σ²(x*)) - information-theoretic optimality
+    - spatial_variance: maximizes trace reduction - spatial diversity
 
     Complexity: O(n² × d) for pairwise kernel + O(n²) for scoring
-    This is expensive but gives better exploration than max_variance.
+    This is expensive but gives more spatially diverse exploration.
 
     Args:
         embeddings: All candidate embeddings (n, d)
@@ -61,7 +65,7 @@ def _compute_variance_reduction_scores(
         excluded_mask: Mask of points to exclude (n,)
 
     Returns:
-        scores: Variance reduction score for each candidate (n,)
+        scores: Spatial variance reduction score for each candidate (n,)
     """
     n = embeddings.shape[0]
 
@@ -74,8 +78,8 @@ def _compute_variance_reduction_scores(
         variance=state.variance,
     )
 
-    # For each candidate x*, compute VR(x*) = Σ_i k(x_i, x*)² / (σ²(x*) + σ_n²)
-    variance_reduction = np.zeros(n, dtype=np.float64)
+    # For each candidate x*, compute SVR(x*) = Σ_i k(x_i, x*)² / (σ²(x*) + σ_n²)
+    spatial_variance_reduction = np.zeros(n, dtype=np.float64)
     noise_var = state.noise ** 2
 
     for i in range(n):
@@ -87,9 +91,63 @@ def _compute_variance_reduction_scores(
             continue
         # Numerator: Σ_j k(x_j, x*)²
         k_col = k_cc[:, i]
-        variance_reduction[i] = np.sum(k_col ** 2) / denom
+        spatial_variance_reduction[i] = np.sum(k_col ** 2) / denom
 
-    return variance_reduction
+    return spatial_variance_reduction
+
+
+def _compute_expected_improvement_scores(
+    mean: np.ndarray,
+    variance_arr: np.ndarray,
+    best_observed: float,
+    excluded_mask: np.ndarray,
+) -> np.ndarray:
+    """
+    Compute Expected Improvement (EI) for each candidate.
+
+    EI balances exploitation (high mean) and exploration (high variance).
+    It measures the expected amount by which f(x) exceeds the current best.
+
+    For Gaussian posterior N(μ(x), σ²(x)):
+        EI(x) = (μ(x) - f_best) * Φ(Z) + σ(x) * φ(Z)
+
+    where:
+        Z = (μ(x) - f_best) / σ(x)
+        Φ = standard normal CDF
+        φ = standard normal PDF
+
+    This is a classic balanced acquisition function that:
+    - Returns 0 if μ(x) ≤ f_best and σ(x) = 0 (no hope of improvement)
+    - Increases with both μ(x) and σ(x)
+    - Naturally trades off exploitation vs exploration
+
+    Args:
+        mean: Posterior means for all candidates (n,)
+        variance_arr: Posterior variances for all candidates (n,)
+        best_observed: Best rating observed so far
+        excluded_mask: Mask of points to exclude (n,)
+
+    Returns:
+        ei_scores: Expected improvement for each candidate (n,)
+    """
+    n = len(mean)
+    ei_scores = np.zeros(n, dtype=np.float64)
+
+    for i in range(n):
+        if excluded_mask[i]:
+            continue
+
+        std = np.sqrt(variance_arr[i])
+        if std <= 0:
+            continue
+
+        # Compute Z-score
+        z = (mean[i] - best_observed) / std
+
+        # EI = (μ - f_best) * Φ(Z) + σ * φ(Z)
+        ei_scores[i] = (mean[i] - best_observed) * norm.cdf(z) + std * norm.pdf(z)
+
+    return ei_scores
 
 
 def run_blocked_step(
@@ -106,7 +164,9 @@ def run_blocked_step(
     optimizer_maxiter: int = 50,
     fit_backend: str = "python",
     score_backend: str = "python",  # "python", "daemon", "auto", "gpu", "none"
-    exploration_strategy: str = "max_variance",  # "max_variance", "variance_reduction"
+    exploitation_strategy: str = "max_mean",  # "max_mean", "ucb", "lcb", "thompson"
+    exploration_strategy: str = "max_variance",  # "max_variance", "spatial_variance", "expected_improvement"
+    ucb_beta: float = 2.0,  # Confidence parameter for UCB/LCB strategies
     compute_mean: bool = True,  # Set False to skip mean (only for explore-only workflows)
     compute_variance: bool = True,  # Set False to skip variance (exploit-only workflows)
     daemon_client: object | None = None,  # Reusable daemon client
@@ -259,29 +319,74 @@ def run_blocked_step(
         exploit_index = -1
         explore_index = -1
     else:
-        # Exploit: Find highest posterior mean
+        # Exploitation: Use specified strategy
         if compute_mean:
-            masked_mean = mean.copy()
-            masked_mean[excluded_mask] = -np.inf
-            exploit_index = int(np.argmax(masked_mean))
+            if exploitation_strategy == "max_mean":
+                # Simple: pick point with highest posterior mean
+                masked_mean = mean.copy()
+                masked_mean[excluded_mask] = -np.inf
+                exploit_index = int(np.argmax(masked_mean))
+
+            elif exploitation_strategy == "ucb":
+                # Upper Confidence Bound: μ(x) + β·σ(x)
+                # Balances mean (exploitation) and uncertainty (exploration)
+                if not compute_variance:
+                    raise ValueError("UCB requires variance computation")
+                ucb_scores = mean + ucb_beta * np.sqrt(variance_arr)
+                ucb_scores[excluded_mask] = -np.inf
+                exploit_index = int(np.argmax(ucb_scores))
+
+            elif exploitation_strategy == "lcb":
+                # Lower Confidence Bound: μ(x) - β·σ(x)
+                # Pessimistic/conservative recommendation
+                if not compute_variance:
+                    raise ValueError("LCB requires variance computation")
+                lcb_scores = mean - ucb_beta * np.sqrt(variance_arr)
+                lcb_scores[excluded_mask] = -np.inf
+                exploit_index = int(np.argmax(lcb_scores))
+
+            elif exploitation_strategy == "thompson":
+                # Thompson Sampling: sample from posterior, return max
+                if not compute_variance:
+                    raise ValueError("Thompson sampling requires variance computation")
+                rng = np.random.default_rng()
+                samples = rng.normal(mean, np.sqrt(variance_arr))
+                samples[excluded_mask] = -np.inf
+                exploit_index = int(np.argmax(samples))
+
+            else:
+                raise ValueError(f"Unknown exploitation_strategy: {exploitation_strategy}")
         else:
             exploit_index = -1
 
-        # Explore: Use specified strategy
+        # Exploration: Use specified strategy
         if compute_variance:
             if exploration_strategy == "max_variance":
-                # Simple: pick point with highest posterior variance
+                # Entropy reduction: pick point with highest posterior variance
+                # Information-theoretically optimal for minimizing H(f|D)
                 masked_var = variance_arr.copy()
                 masked_var[excluded_mask] = -np.inf
                 explore_index = int(np.argmax(masked_var))
 
-            elif exploration_strategy == "variance_reduction":
-                # Sophisticated: pick point that would reduce total uncertainty the most
-                # This considers spatial correlation between candidates
-                vr_scores = _compute_variance_reduction_scores(
+            elif exploration_strategy == "spatial_variance":
+                # Spatial variance reduction: pick point that reduces mean uncertainty most
+                # Considers spatial correlation between candidates
+                # Tends to give more diverse exploration than max_variance
+                svr_scores = _compute_spatial_variance_reduction_scores(
                     embeddings, variance_arr, state, excluded_mask
                 )
-                explore_index = int(np.argmax(vr_scores))
+                explore_index = int(np.argmax(svr_scores))
+
+            elif exploration_strategy == "expected_improvement":
+                # Expected Improvement: balanced exploitation + exploration
+                # Classic acquisition function from Bayesian optimization
+                if not compute_mean:
+                    raise ValueError("Expected Improvement requires mean computation")
+                best_observed = float(np.max(ratings))
+                ei_scores = _compute_expected_improvement_scores(
+                    mean, variance_arr, best_observed, excluded_mask
+                )
+                explore_index = int(np.argmax(ei_scores))
 
             else:
                 raise ValueError(f"Unknown exploration_strategy: {exploration_strategy}")
