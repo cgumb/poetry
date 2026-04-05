@@ -235,6 +235,13 @@ else
   python -m venv --system-site-packages "$VENV_DIR"
   source "$VENV_DIR/bin/activate"
 
+  # Ensure venv's bin is first in PATH (spack may have polluted it)
+  export PATH="$REPO_DIR/$VENV_DIR/bin:$PATH"
+
+  # Verify we're using the venv's pip
+  echo "Using pip: $(which pip)"
+  echo "Using python: $(which python)"
+
   # Install dependencies
   python -m pip install --upgrade pip setuptools wheel
   python -m pip install -r requirements-core.txt
