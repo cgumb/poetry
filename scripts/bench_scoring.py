@@ -10,6 +10,8 @@ Compares scoring (posterior prediction) performance across:
 Note: Scoring complexity is O(n_candidates × m × d) + O(n_candidates × m²),
 where m is the number of rated points and n_candidates is the number of
 points to score.
+
+IMPORTANT: Thread count must be set BEFORE importing numpy/scipy!
 """
 
 from __future__ import annotations
@@ -17,14 +19,21 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 
-from poetry_gp.backends.blocked import run_blocked_step
-from poetry_gp.backends.gpu_scoring import is_gpu_available
+def set_num_threads(n: int | None) -> None:
+    """Set number of BLAS threads BEFORE importing numpy."""
+    if n is None:
+        # Auto-detect from environment or use CPU count
+        n = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
+
+    n_str = str(n)
+    os.environ["OMP_NUM_THREADS"] = n_str
+    os.environ["OPENBLAS_NUM_THREADS"] = n_str
+    os.environ["MKL_NUM_THREADS"] = n_str
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,67 +52,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def set_num_threads(n: int | None) -> None:
-    """Set number of BLAS threads."""
-    if n is None:
-        # Auto-detect from environment or use CPU count
-        n = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
-
-    n_str = str(n)
-    os.environ["OMP_NUM_THREADS"] = n_str
-    os.environ["OPENBLAS_NUM_THREADS"] = n_str
-    os.environ["MKL_NUM_THREADS"] = n_str
-
-
-def run_scoring_benchmark(
-    m_rated: int,
-    n_candidates: int,
-    dim: int,
-    seed: int,
-    score_backend: str,
-    num_threads: int | None = None,
-) -> dict:
-    """Run single scoring benchmark."""
-
-    # Set threading for this run
-    if score_backend == "python" and num_threads is not None:
-        set_num_threads(num_threads)
-
-    # Generate synthetic data
-    rng = np.random.default_rng(seed)
-    embeddings = rng.normal(size=(n_candidates, dim))
-    embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-12
-
-    rated_indices = rng.choice(n_candidates, size=m_rated, replace=False)
-    ratings = rng.normal(size=m_rated)
-
-    # Run benchmark (fit + score)
-    result = run_blocked_step(
-        embeddings,
-        rated_indices,
-        ratings,
-        length_scale=1.0,
-        variance=1.0,
-        noise=1e-3,
-        fit_backend="python",  # Always use Python fit for fair comparison
-        score_backend=score_backend,
-        block_size=2048,
-    )
-
-    return {
-        "m_rated": m_rated,
-        "n_candidates": n_candidates,
-        "dim": dim,
-        "score_backend": score_backend,
-        "num_threads": num_threads if score_backend == "python" else None,
-        "fit_seconds": result.profile.fit_seconds,
-        "score_seconds": result.profile.score_seconds,
-        "total_seconds": result.profile.total_seconds,
-    }
-
-
 def main() -> None:
     args = parse_args()
+
+    # NOW import numpy and other heavy libraries (after thread env vars are set)
+    import numpy as np
+    from poetry_gp.backends.blocked import run_blocked_step
+    from poetry_gp.backends.gpu_scoring import is_gpu_available
 
     # Check GPU availability
     has_gpu = is_gpu_available()
@@ -122,40 +77,107 @@ def main() -> None:
 
     results = []
 
+    # Test each m_rated value
     for m_rated in args.m_rated:
         print(f"Testing m_rated = {m_rated:,}")
         print("-" * 40)
 
+        # Generate synthetic data once per m_rated
+        rng = np.random.default_rng(args.seed)
+        embeddings = rng.normal(size=(args.n_candidates, args.dim))
+        embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-12
+        rated_indices = rng.choice(args.n_candidates, size=m_rated, replace=False)
+        ratings = rng.normal(size=m_rated)
+
         # 1. Python single-threaded
         print("  Python (1 thread)...", end=" ", flush=True)
-        result = run_scoring_benchmark(
-            m_rated, args.n_candidates, args.dim, args.seed,
+        set_num_threads(1)
+        # Force reimport of BLAS-using modules
+        if 'scipy.linalg' in sys.modules:
+            del sys.modules['scipy.linalg']
+
+        result = run_blocked_step(
+            embeddings,
+            rated_indices,
+            ratings,
+            length_scale=1.0,
+            variance=1.0,
+            noise=1e-3,
+            fit_backend="python",
             score_backend="python",
-            num_threads=1,
+            block_size=2048,
         )
-        results.append(result)
-        print(f"score={result['score_seconds']:.3f}s")
+
+        results.append({
+            "m_rated": m_rated,
+            "n_candidates": args.n_candidates,
+            "dim": args.dim,
+            "score_backend": "python",
+            "num_threads": 1,
+            "fit_seconds": result.profile.fit_seconds,
+            "score_seconds": result.profile.score_seconds,
+            "total_seconds": result.profile.total_seconds,
+        })
+        print(f"score={result.profile.score_seconds:.3f}s")
 
         # 2. Python multi-threaded
         print(f"  Python ({args.cpu_threads or 'auto'} threads)...", end=" ", flush=True)
-        result = run_scoring_benchmark(
-            m_rated, args.n_candidates, args.dim, args.seed,
+        set_num_threads(args.cpu_threads)
+        # Force reimport of BLAS-using modules
+        if 'scipy.linalg' in sys.modules:
+            del sys.modules['scipy.linalg']
+
+        result = run_blocked_step(
+            embeddings,
+            rated_indices,
+            ratings,
+            length_scale=1.0,
+            variance=1.0,
+            noise=1e-3,
+            fit_backend="python",
             score_backend="python",
-            num_threads=args.cpu_threads,
+            block_size=2048,
         )
-        results.append(result)
-        print(f"score={result['score_seconds']:.3f}s")
+
+        results.append({
+            "m_rated": m_rated,
+            "n_candidates": args.n_candidates,
+            "dim": args.dim,
+            "score_backend": "python",
+            "num_threads": args.cpu_threads if args.cpu_threads else "auto",
+            "fit_seconds": result.profile.fit_seconds,
+            "score_seconds": result.profile.score_seconds,
+            "total_seconds": result.profile.total_seconds,
+        })
+        print(f"score={result.profile.score_seconds:.3f}s")
 
         # 3. GPU (if available)
         if has_gpu:
             print("  GPU (CuPy)...", end=" ", flush=True)
             try:
-                result = run_scoring_benchmark(
-                    m_rated, args.n_candidates, args.dim, args.seed,
+                result = run_blocked_step(
+                    embeddings,
+                    rated_indices,
+                    ratings,
+                    length_scale=1.0,
+                    variance=1.0,
+                    noise=1e-3,
+                    fit_backend="python",
                     score_backend="gpu",
+                    block_size=2048,
                 )
-                results.append(result)
-                print(f"score={result['score_seconds']:.3f}s")
+
+                results.append({
+                    "m_rated": m_rated,
+                    "n_candidates": args.n_candidates,
+                    "dim": args.dim,
+                    "score_backend": "gpu",
+                    "num_threads": None,
+                    "fit_seconds": result.profile.fit_seconds,
+                    "score_seconds": result.profile.score_seconds,
+                    "total_seconds": result.profile.total_seconds,
+                })
+                print(f"score={result.profile.score_seconds:.3f}s")
             except Exception as e:
                 print(f"FAILED: {e}")
 

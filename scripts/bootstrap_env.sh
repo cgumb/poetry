@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+# Set TMPDIR early (before any operations that might use temp space)
+export TMPDIR="${TMPDIR:-$HOME/tmp}"
+mkdir -p "$TMPDIR"
+
 # Parse arguments
 ENABLE_GPU=0
 INSTALL_APP=0
@@ -31,8 +35,6 @@ done
 # Environment variables
 SPACK_SETUP="${SPACK_SETUP_SCRIPT:-$HOME/161588/spack/share/spack/setup-env.sh}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export TMPDIR="${TMPDIR:-$HOME/tmp}"
-mkdir -p "$TMPDIR"
 
 echo "========================================"
 echo "Poetry Project Environment Bootstrap"
