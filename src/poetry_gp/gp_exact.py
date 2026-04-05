@@ -310,7 +310,26 @@ def fit_exact_gp(
     )
 
 
-def predict_block(state: GPState, x_query: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def predict_block(
+    state: GPState,
+    x_query: np.ndarray,
+    compute_variance: bool = True,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """
+    Predict GP posterior mean and (optionally) variance.
+
+    Args:
+        state: Fitted GP state
+        x_query: Query points (n_query × d)
+        compute_variance: Whether to compute variance (expensive O(n × m²))
+
+    Returns:
+        (mean, variance) where variance is None if compute_variance=False
+
+    Complexity:
+        - Mean only: O(n × m × d) + O(n × m)
+        - With variance: O(n × m × d) + O(n × m²) ← m times more expensive!
+    """
     x_query = np.asarray(x_query, dtype=np.float64)
     k_qr = rbf_kernel(
         x_query,
@@ -320,6 +339,10 @@ def predict_block(state: GPState, x_query: np.ndarray) -> tuple[np.ndarray, np.n
     )
     mean = k_qr @ state.alpha
 
+    if not compute_variance:
+        return mean, None
+
+    # Variance computation: expensive O(n × m²) triangular solve
     l_tri = np.tril(state.cho_factor_data[0])
     v = solve_triangular(l_tri, k_qr.T, lower=True, check_finite=False)
     var = state.variance - np.sum(v * v, axis=0)

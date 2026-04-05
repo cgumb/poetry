@@ -43,12 +43,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--optimize-hyperparameters", action="store_true")
     parser.add_argument("--optimizer-maxiter", type=int, default=50)
     parser.add_argument("--score-backend", type=str, default="python",
-                        choices=["python", "daemon", "auto"],
-                        help="Scoring backend (default: python). Daemon only beneficial for m > 5000+, has high overhead for typical CLI usage.")
+                        choices=["python", "daemon", "auto", "gpu"],
+                        help="Scoring backend (default: python). GPU provides 2-10x speedup for large m. Daemon has high overhead for typical CLI usage.")
     parser.add_argument("--daemon-nprocs", type=int, default=4,
                         help="Number of MPI processes for daemon scoring")
     parser.add_argument("--daemon-launcher", type=str, default="mpirun",
                         help="MPI launcher for daemon (mpirun, srun, etc.)")
+    parser.add_argument("--exploration-strategy", type=str, default="max_variance",
+                        choices=["max_variance", "variance_reduction"],
+                        help="Exploration strategy (default: max_variance). "
+                             "max_variance: Pick point with highest uncertainty. "
+                             "variance_reduction: Pick point that would reduce total uncertainty the most (slower but better exploration).")
     return parser.parse_args()
 
 
@@ -385,6 +390,7 @@ def main() -> None:
                     optimize_hyperparameters=args.optimize_hyperparameters,
                     optimizer_maxiter=args.optimizer_maxiter,
                     score_backend=args.score_backend,
+                    exploration_strategy=args.exploration_strategy,
                     daemon_client=daemon_client,
                     daemon_nprocs=args.daemon_nprocs,
                     daemon_launcher=args.daemon_launcher,
@@ -414,6 +420,14 @@ def main() -> None:
             param_table.add_row("Noise", f"{result.state.noise:.4g}")
             if result.state.log_marginal_likelihood is not None:
                 param_table.add_row("Log marginal ℒ", f"{result.state.log_marginal_likelihood:.6f}")
+
+            # Show exploration strategy if user selected explore
+            if cmd == "x":
+                strategy_display = {
+                    "max_variance": "Max Variance",
+                    "variance_reduction": "Variance Reduction"
+                }.get(args.exploration_strategy, args.exploration_strategy)
+                param_table.add_row("Explore strategy", strategy_display)
 
             console.print()
             console.print(Panel(timing_table, title="⏱️  Timing", border_style="green", box=box.ROUNDED))

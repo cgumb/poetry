@@ -45,9 +45,10 @@ def predict_block_gpu(
     x_query: np.ndarray,
     length_scale: float,
     variance: float,
-) -> tuple[np.ndarray, np.ndarray]:
+    compute_variance: bool = True,
+) -> tuple[np.ndarray, np.ndarray | None]:
     """
-    Predict mean and variance for query points using GPU.
+    Predict mean and (optionally) variance for query points using GPU.
 
     Args:
         x_rated_gpu: Training points on GPU (m, d)
@@ -56,10 +57,11 @@ def predict_block_gpu(
         x_query: Query points on CPU (n_query, d)
         length_scale: RBF length scale
         variance: RBF variance
+        compute_variance: Whether to compute variance (expensive O(n × m²))
 
     Returns:
         mean: Posterior mean on CPU (n_query,)
-        var: Posterior variance on CPU (n_query,)
+        var: Posterior variance on CPU (n_query,) or None if not computed
     """
     # Transfer query points to GPU
     x_query_gpu = cp.asarray(x_query, dtype=cp.float64)
@@ -69,6 +71,10 @@ def predict_block_gpu(
 
     # Compute mean: k_qr @ alpha
     mean_gpu = k_qr @ alpha_gpu
+    mean = cp.asnumpy(mean_gpu)
+
+    if not compute_variance:
+        return mean, None
 
     # Compute variance: solve L @ V = K^T, then var = variance - ||V||^2
     v = solve_triangular_gpu(cho_lower_gpu, k_qr.T, lower=True)
@@ -76,7 +82,6 @@ def predict_block_gpu(
     var_gpu = cp.maximum(var_gpu, 0.0)
 
     # Transfer results back to CPU
-    mean = cp.asnumpy(mean_gpu)
     var = cp.asnumpy(var_gpu)
 
     return mean, var
@@ -86,7 +91,8 @@ def score_all_gpu(
     state,
     embeddings: np.ndarray,
     block_size: int = 2048,
-) -> tuple[np.ndarray, np.ndarray, float]:
+    compute_variance: bool = True,
+) -> tuple[np.ndarray, np.ndarray | None, float]:
     """
     Score all embeddings using GPU acceleration.
 
@@ -94,10 +100,11 @@ def score_all_gpu(
         state: GPState with x_rated, alpha, cho_factor_data
         embeddings: All candidate embeddings (n, d)
         block_size: Process candidates in blocks to manage GPU memory
+        compute_variance: Whether to compute variance (set False for exploit-only)
 
     Returns:
         mean: Posterior mean for all candidates (n,)
-        variance: Posterior variance for all candidates (n,)
+        variance: Posterior variance for all candidates (n,) or None if not computed
         gpu_seconds: Time spent on GPU computation (excluding initial transfer)
     """
     import time
@@ -116,7 +123,7 @@ def score_all_gpu(
 
     # Allocate output arrays
     mean = np.empty(n, dtype=np.float64)
-    variance = np.empty(n, dtype=np.float64)
+    variance = np.empty(n, dtype=np.float64) if compute_variance else None
 
     # Process in blocks to manage GPU memory
     compute_start = time.perf_counter()
@@ -129,9 +136,11 @@ def score_all_gpu(
             embeddings[start:stop],
             state.length_scale,
             state.variance,
+            compute_variance=compute_variance,
         )
         mean[start:stop] = mean_block
-        variance[start:stop] = var_block
+        if compute_variance:
+            variance[start:stop] = var_block
 
     # Ensure all GPU operations complete
     cp.cuda.Stream.null.synchronize()
