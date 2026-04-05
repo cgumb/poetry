@@ -108,6 +108,8 @@ def prepare_scalapack_fit_workdir(
     grid_rows: int | None = None,
     grid_cols: int | None = None,
     native_backend: str = "auto",
+    return_alpha: bool = True,
+    return_chol: bool = True,
     workdir: Path | None = None,
 ) -> ScaLAPACKPreparedRun:
     K_rr = np.asarray(K_rr, dtype=np.float64)
@@ -162,6 +164,10 @@ def prepare_scalapack_fit_workdir(
         native_backend,
         "--block-size",
         str(block_size),
+        "--return-alpha",
+        "1" if return_alpha else "0",
+        "--return-chol",
+        "1" if return_chol else "0",
     ]
 
     return ScaLAPACKPreparedRun(
@@ -190,6 +196,8 @@ def prepare_scalapack_feature_fit_workdir(
     grid_rows: int | None = None,
     grid_cols: int | None = None,
     native_backend: str = "auto",
+    return_alpha: bool = True,
+    return_chol: bool = True,
     workdir: Path | None = None,
 ) -> ScaLAPACKPreparedRun:
     x_rated = np.asarray(x_rated, dtype=np.float64)
@@ -248,6 +256,10 @@ def prepare_scalapack_feature_fit_workdir(
         native_backend,
         "--block-size",
         str(block_size),
+        "--return-alpha",
+        "1" if return_alpha else "0",
+        "--return-chol",
+        "1" if return_chol else "0",
     ]
 
     return ScaLAPACKPreparedRun(
@@ -323,8 +335,20 @@ def _run_prepared_fit(
         ) from e
 
     n = int(meta["n"])
-    alpha = np.fromfile(prepared.alpha_bin_path, dtype=np.float64, count=n)
-    chol = np.fromfile(prepared.chol_bin_path, dtype=np.float64, count=n * n).reshape(n, n)
+    has_alpha = bool(meta.get("has_alpha", True))  # Default True for backward compatibility
+    has_chol = bool(meta.get("has_chol", True))
+
+    # Only read outputs that were actually gathered
+    if has_alpha:
+        alpha = np.fromfile(prepared.alpha_bin_path, dtype=np.float64, count=n)
+    else:
+        alpha = np.zeros(n, dtype=np.float64)
+
+    if has_chol:
+        chol = np.fromfile(prepared.chol_bin_path, dtype=np.float64, count=n * n).reshape(n, n)
+    else:
+        chol = np.zeros((n, n), dtype=np.float64)
+
     result = ScaLAPACKFitResult(
         alpha=alpha,
         chol_lower=chol,
@@ -395,6 +419,8 @@ def fit_exact_gp_scalapack(
     grid_rows: int | None = None,
     grid_cols: int | None = None,
     native_backend: str = "auto",
+    return_alpha: bool = True,
+    return_chol: bool = True,
     workdir: Path | None = None,
     verbose: bool = False,
 ) -> ScaLAPACKFitResult:
@@ -408,6 +434,8 @@ def fit_exact_gp_scalapack(
         grid_rows=grid_rows,
         grid_cols=grid_cols,
         native_backend=native_backend,
+        return_alpha=return_alpha,
+        return_chol=return_chol,
         workdir=workdir,
     )
     return _run_prepared_fit(
@@ -432,6 +460,8 @@ def fit_exact_gp_scalapack_from_features(
     grid_rows: int | None = None,
     grid_cols: int | None = None,
     native_backend: str = "auto",
+    return_alpha: bool = True,
+    return_chol: bool = True,
     workdir: Path | None = None,
     verbose: bool = False,
 ) -> ScaLAPACKFitResult:
@@ -452,6 +482,8 @@ def fit_exact_gp_scalapack_from_features(
         grid_rows=grid_rows,
         grid_cols=grid_cols,
         native_backend=native_backend,
+        return_alpha=return_alpha,
+        return_chol=return_chol,
         workdir=workdir,
     )
     return _run_prepared_fit(
@@ -476,6 +508,8 @@ def fit_exact_gp_scalapack_from_rated(
     grid_rows: int | None = None,
     grid_cols: int | None = None,
     native_backend: str = "auto",
+    return_alpha: bool = True,
+    return_chol: bool = True,
     workdir: Path | None = None,
     verbose: bool = False,
 ) -> GPState:
@@ -503,15 +537,23 @@ def fit_exact_gp_scalapack_from_rated(
         grid_rows=grid_rows,
         grid_cols=grid_cols,
         native_backend=native_backend,
+        return_alpha=return_alpha,
+        return_chol=return_chol,
         workdir=workdir,
         verbose=verbose,
     )
     lml = -0.5 * float(y_rated @ result.alpha) - 0.5 * float(result.logdet) - 0.5 * len(y_rated) * np.log(2.0 * np.pi)
+
+    # Only include cho_factor_data if Cholesky was actually returned
+    cho_factor_data = None
+    if return_chol and np.any(result.chol_lower != 0):
+        cho_factor_data = (result.chol_lower, True)
+
     return GPState(
         x_rated=x_rated,
         y_rated=y_rated,
         alpha=result.alpha,
-        cho_factor_data=(result.chol_lower, True),
+        cho_factor_data=cho_factor_data,
         length_scale=length_scale,
         variance=variance,
         noise=noise,

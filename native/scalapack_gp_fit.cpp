@@ -44,6 +44,8 @@ struct Args {
   std::string chol_bin;
   std::string backend = "auto";
   int block_size = 128;
+  bool return_alpha = true;  // Whether to gather and return alpha
+  bool return_chol = true;   // Whether to gather and return Cholesky factor
 };
 
 struct NativeResult {
@@ -60,6 +62,8 @@ struct NativeResult {
   double logdet = 0.0;
   std::vector<double> alpha;
   std::vector<double> chol;
+  bool has_alpha = false;  // Whether alpha was actually gathered/computed
+  bool has_chol = false;   // Whether chol was actually gathered/computed
 };
 
 Args parse_args(int argc, char** argv) {
@@ -79,6 +83,14 @@ Args parse_args(int argc, char** argv) {
   }
   if (kv.count("--block-size")) {
     args.block_size = std::stoi(kv["--block-size"]);
+  }
+  if (kv.count("--return-alpha")) {
+    int val = std::stoi(kv["--return-alpha"]);
+    args.return_alpha = (val != 0);
+  }
+  if (kv.count("--return-chol")) {
+    int val = std::stoi(kv["--return-chol"]);
+    args.return_chol = (val != 0);
   }
   if (args.input_meta.empty() || args.matrix_bin.empty() || args.rhs_bin.empty() ||
       args.output_meta.empty() || args.alpha_bin.empty() || args.chol_bin.empty()) {
@@ -194,7 +206,9 @@ void write_output_meta(const std::string& path, const NativeResult& result, std:
   out << "  \"solve_seconds\": " << result.solve_seconds << ",\n";
   out << "  \"gather_seconds\": " << result.gather_seconds << ",\n";
   out << "  \"total_seconds\": " << result.total_seconds << ",\n";
-  out << "  \"logdet\": " << result.logdet << "\n";
+  out << "  \"logdet\": " << result.logdet << ",\n";
+  out << "  \"has_alpha\": " << (result.has_alpha ? "true" : "false") << ",\n";
+  out << "  \"has_chol\": " << (result.has_chol ? "true" : "false") << "\n";
   out << "}\n";
 }
 
@@ -893,7 +907,7 @@ std::vector<double> build_local_rbf_blocks_from_features(
 }
 #endif
 
-NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<double>& full_matrix_root, const std::vector<double>& rhs_root, int block_size, MPI_Comm comm) {
+NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<double>& full_matrix_root, const std::vector<double>& rhs_root, int block_size, bool return_alpha, bool return_chol, MPI_Comm comm) {
   NativeResult result;
   result.backend = "scalapack";
   result.implemented = true;
@@ -968,8 +982,14 @@ NativeResult run_scalapack(std::size_t n, int rank, int size, const std::vector<
   const auto solve_end = std::chrono::steady_clock::now();
 
   const auto gather_start = std::chrono::steady_clock::now();
-  gather_alpha_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, local_rows, local_b, comm).swap(result.alpha);
-  gather_local_matrix_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, lld_a, local_rows, local_cols, local_a, comm).swap(result.chol);
+  if (return_alpha) {
+    gather_alpha_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, local_rows, local_b, comm).swap(result.alpha);
+    result.has_alpha = true;
+  }
+  if (return_chol) {
+    gather_local_matrix_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, lld_a, local_rows, local_cols, local_a, comm).swap(result.chol);
+    result.has_chol = true;
+  }
   MPI_Barrier(comm);
   const auto gather_end = std::chrono::steady_clock::now();
   const auto total_end = std::chrono::steady_clock::now();
@@ -997,6 +1017,8 @@ NativeResult run_scalapack_distributed(
     double variance,
     double noise,
     int block_size,
+    bool return_alpha,
+    bool return_chol,
     MPI_Comm comm) {
 
   NativeResult result;
@@ -1170,10 +1192,16 @@ NativeResult run_scalapack_distributed(
   MPI_Barrier(comm);
   const auto solve_end = std::chrono::steady_clock::now();
 
-  // Step 6: Gather results (same as before)
+  // Step 6: Gather results (conditional based on flags)
   const auto gather_start = std::chrono::steady_clock::now();
-  gather_alpha_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, local_rows, local_b, comm).swap(result.alpha);
-  gather_local_matrix_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, lld_a, local_rows, local_cols, local_a, comm).swap(result.chol);
+  if (return_alpha) {
+    gather_alpha_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, local_rows, local_b, comm).swap(result.alpha);
+    result.has_alpha = true;
+  }
+  if (return_chol) {
+    gather_local_matrix_to_root(n, nb, rank, size, grid_rows, grid_cols, myrow, mycol, lld_a, local_rows, local_cols, local_a, comm).swap(result.chol);
+    result.has_chol = true;
+  }
   MPI_Barrier(comm);
   const auto gather_end = std::chrono::steady_clock::now();
   const auto total_end = std::chrono::steady_clock::now();
@@ -1227,7 +1255,7 @@ int main(int argc, char** argv) {
     NativeResult result;
     if (resolved_backend == "scalapack") {
 #ifdef HAVE_SCALAPACK
-      result = run_scalapack(n, rank, size, full_matrix, rhs, args.block_size, MPI_COMM_WORLD);
+      result = run_scalapack(n, rank, size, full_matrix, rhs, args.block_size, args.return_alpha, args.return_chol, MPI_COMM_WORLD);
 #else
       result.implemented = false;
       result.backend = "scalapack";
@@ -1239,14 +1267,23 @@ int main(int argc, char** argv) {
     result.requested_backend = args.backend;
 
     if (rank == 0) {
-      if (result.alpha.empty()) {
-        result.alpha.assign(n, 0.0);
+      // Only write outputs that were actually gathered
+      if (result.has_alpha) {
+        write_binary_vector(args.alpha_bin, result.alpha);
+      } else if (!args.alpha_bin.empty()) {
+        // If output path specified but not gathered, write empty/zero placeholder
+        std::vector<double> empty_alpha(n, 0.0);
+        write_binary_vector(args.alpha_bin, empty_alpha);
       }
-      if (result.chol.empty()) {
-        result.chol.assign(n * n, 0.0);
+
+      if (result.has_chol) {
+        write_binary_matrix(args.chol_bin, result.chol);
+      } else if (!args.chol_bin.empty()) {
+        // If output path specified but not gathered, write empty/zero placeholder
+        std::vector<double> empty_chol(n * n, 0.0);
+        write_binary_matrix(args.chol_bin, empty_chol);
       }
-      write_binary_vector(args.alpha_bin, result.alpha);
-      write_binary_matrix(args.chol_bin, result.chol);
+
       write_output_meta(args.output_meta, result, n, size);
       std::cerr << "[scalapack_gp_fit] backend=" << result.backend << " requested=" << result.requested_backend << " n=" << n << " ranks=" << size << "\n";
       if (!result.implemented) {

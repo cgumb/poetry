@@ -195,6 +195,12 @@ def run_blocked_step(
 
     x_rated = embeddings[rated_indices]
 
+    # Optimize: Skip variance/chol gathering if score_backend="none"
+    # (no scoring = no need for variance or cholesky factor)
+    if score_backend == "none":
+        compute_variance = False
+        compute_mean = False
+
     fit_start = perf_counter()
     if fit_backend == "python":
         state: GPState = fit_exact_gp(
@@ -209,6 +215,9 @@ def run_blocked_step(
     elif fit_backend == "native_reference":
         if optimize_hyperparameters:
             raise ValueError("native_reference fit backend does not support hyperparameter optimization yet")
+        # Only gather outputs needed for subsequent scoring
+        # return_alpha: Always True (needed for mean computation or to store in state)
+        # return_chol: Only if variance will be computed
         state = fit_exact_gp_scalapack_from_rated(
             x_rated,
             ratings,
@@ -222,6 +231,8 @@ def run_blocked_step(
             grid_rows=scalapack_grid_rows,
             grid_cols=scalapack_grid_cols,
             native_backend=scalapack_native_backend,
+            return_alpha=True,  # Always needed
+            return_chol=compute_variance,  # Only if variance will be computed
             workdir=scalapack_workdir,
             verbose=scalapack_verbose,
         )

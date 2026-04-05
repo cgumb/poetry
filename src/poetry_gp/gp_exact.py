@@ -15,7 +15,7 @@ class GPState:
     x_rated: np.ndarray
     y_rated: np.ndarray
     alpha: np.ndarray
-    cho_factor_data: tuple[np.ndarray, bool]
+    cho_factor_data: tuple[np.ndarray, bool] | None  # None for fit-only (no variance computation)
     length_scale: float
     variance: float
     noise: float
@@ -343,6 +343,11 @@ def predict_block(
         return mean, None
 
     # Variance computation: expensive O(n × m²) triangular solve
+    if state.cho_factor_data is None:
+        raise RuntimeError(
+            "Cannot compute variance: GPState was created without Cholesky factor. "
+            "Use return_chol=True when fitting, or set compute_variance=False."
+        )
     l_tri = np.tril(state.cho_factor_data[0])
     v = solve_triangular(l_tri, k_qr.T, lower=True, check_finite=False)
     var = state.variance - np.sum(v * v, axis=0)
