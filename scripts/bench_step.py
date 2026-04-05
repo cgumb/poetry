@@ -15,7 +15,7 @@ from poetry_gp.backends.naive import run_naive_step
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", choices=["naive", "blocked"], required=True)
-    parser.add_argument("--fit-backend", choices=["python", "native_reference"], default="python")
+    parser.add_argument("--fit-backend", choices=["python", "native_reference", "native_lapack"], default="python")
     parser.add_argument("--score-backend", choices=["python", "daemon", "auto", "gpu", "none"], default="python",
                         help="Scoring backend: python (CPU BLAS), daemon (MPI parallel), auto (try daemon), gpu (CUDA/CuPy), none (skip scoring)")
     parser.add_argument("--n-poems", type=int, default=5000)

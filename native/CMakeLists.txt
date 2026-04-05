@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(POETRY_ENABLE_SCALAPACK "Enable discovery and linkage of a ScaLAPACK library if available" ON)
+option(POETRY_ENABLE_PYBIND11 "Enable PyBind11 for in-memory Python bridge" ON)
 set(POETRY_SCALAPACK_LIBRARY "" CACHE STRING "Optional explicit path to a ScaLAPACK library")
 
 find_package(MPI REQUIRED)
@@ -59,4 +60,29 @@ target_link_libraries(scalapack_daemon PRIVATE MPI::MPI_CXX ${BLAS_LIBRARIES})
 if(POETRY_SCALAPACK_FOUND)
   target_link_libraries(scalapack_daemon PRIVATE ${POETRY_SCALAPACK_LIBRARIES})
   target_compile_definitions(scalapack_daemon PRIVATE HAVE_SCALAPACK=1)
+endif()
+
+# PyBind11 module for in-memory Python bridge (Phase 1: LAPACK only)
+if(POETRY_ENABLE_PYBIND11)
+  include(FetchContent)
+  FetchContent_Declare(
+    pybind11
+    GIT_REPOSITORY https://github.com/pybind/pybind11
+    GIT_TAG        v2.11.1
+  )
+  FetchContent_MakeAvailable(pybind11)
+
+  pybind11_add_module(poetry_gp_native pybind11_lapack.cpp)
+  target_link_libraries(poetry_gp_native PRIVATE ${BLAS_LIBRARIES})
+
+  # Enable OpenMP for multi-threaded BLAS (if available)
+  find_package(OpenMP)
+  if(OpenMP_CXX_FOUND)
+    target_link_libraries(poetry_gp_native PRIVATE OpenMP::OpenMP_CXX)
+    message(STATUS "PyBind11 module built with OpenMP support")
+  else()
+    message(STATUS "PyBind11 module built without OpenMP (single-threaded BLAS)")
+  endif()
+
+  message(STATUS "PyBind11 module enabled: poetry_gp_native")
 endif()

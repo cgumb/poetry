@@ -10,6 +10,7 @@ from scipy.stats import norm
 from ..gp_exact import GPState, fit_exact_gp, predict_block
 from ..kernel import rbf_kernel
 from .scalapack_fit import fit_exact_gp_scalapack_from_rated
+from .native_lapack import fit_exact_gp_native, predict_native, is_native_available
 from .scoring import score_all_with_fallback, try_create_daemon_client
 from .gpu_scoring import score_all_gpu, is_gpu_available
 
@@ -235,6 +236,25 @@ def run_blocked_step(
             return_chol=compute_variance,  # Only if variance will be computed
             workdir=scalapack_workdir,
             verbose=scalapack_verbose,
+        )
+    elif fit_backend == "native_lapack":
+        if optimize_hyperparameters:
+            raise ValueError("native_lapack fit backend does not support hyperparameter optimization yet")
+        if not is_native_available():
+            raise ImportError(
+                "native_lapack backend requires poetry_gp_native module. "
+                "Build with: make native-build (requires PyBind11)"
+            )
+        # In-memory LAPACK (no MPI, no file I/O)
+        # Suitable for m < 5000
+        state = fit_exact_gp_native(
+            x_rated,
+            ratings,
+            length_scale=length_scale,
+            variance=variance,
+            noise=noise,
+            return_chol=compute_variance,  # Only if variance will be computed
+            verbose=scalapack_verbose,  # Reuse verbose flag
         )
     else:
         raise ValueError(f"Unknown fit_backend: {fit_backend}")
