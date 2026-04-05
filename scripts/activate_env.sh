@@ -132,6 +132,10 @@ else
 
   source .venv/bin/activate
 
+  # Ensure venv's bin is first in PATH (spack may have polluted it)
+  export PATH="$REPO_DIR/.venv/bin:$PATH"
+
   echo "✓ CPU environment activated (spack + venv)"
   echo "  Python: $(which python)"
+  echo "  Pip: $(which pip)"
 fi
