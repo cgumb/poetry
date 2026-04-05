@@ -39,16 +39,18 @@ echo ""
 
 # Output file
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-OUTPUT_CSV="results/gpu_scoring_bench_${TIMESTAMP}.csv"
+OUTPUT_CSV="results/gpu_scoring_${TIMESTAMP}.csv"
 
-echo "Running GPU scoring benchmark..."
+echo "Running GPU vs CPU scoring benchmark..."
 echo "Output: $OUTPUT_CSV"
+echo "Testing: m ∈ {100, 500, 1k, 2k, 5k, 10k, 15k, 20k}"
+echo "         n_candidates = 25k"
+echo "         dim = 384"
 echo ""
 
-# Run benchmark
-# Test m_rated from 100 to 10000 with 25k candidates
+# Run benchmark with extended m values
 python scripts/bench_scoring.py \
-  --m-rated 100 500 1000 2000 5000 10000 \
+  --m-rated 100 500 1000 2000 5000 10000 15000 20000 \
   --n-candidates 25000 \
   --dim 384 \
   --seed 42 \
@@ -57,6 +59,16 @@ python scripts/bench_scoring.py \
 
 echo ""
 echo "========================================"
-echo "Benchmark complete!"
+echo "GPU vs CPU scoring benchmark complete!"
 echo "Output: $OUTPUT_CSV"
+echo ""
+echo "Expected results:"
+echo "  m < 1k: GPU has cold-start overhead, CPU may be faster"
+echo "  m = 1k-5k: GPU starts to show advantage (2-5x)"
+echo "  m = 10k+: GPU should dominate (5-10x speedup)"
+echo ""
+echo "Key insights:"
+echo "  - Where does GPU become worthwhile?"
+echo "  - Threading benefit for CPU (1 vs 8 threads)"
+echo "  - GPU speedup scaling with m"
 echo "========================================"
