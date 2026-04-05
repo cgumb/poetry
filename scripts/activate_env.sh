@@ -45,9 +45,18 @@ cd "$REPO_DIR"
 HAS_CONDA_ENV=0
 HAS_VENV=0
 
-# Check for conda environment
-if command -v conda &> /dev/null; then
-  if conda env list | grep -q "poetry-gpu"; then
+# Check for conda/micromamba environment
+MICROMAMBA_BIN="$HOME/.local/bin/micromamba"
+
+# First check micromamba (most likely if bootstrap --gpu was used)
+if [[ -f "$MICROMAMBA_BIN" ]]; then
+  export MAMBA_ROOT_PREFIX="$HOME/micromamba"
+  if "$MICROMAMBA_BIN" env list | grep -q "poetry-gpu"; then
+    HAS_CONDA_ENV=1
+  fi
+elif command -v conda &> /dev/null; then
+  # Fall back to conda check
+  if conda env list 2>/dev/null | grep -q "poetry-gpu"; then
     HAS_CONDA_ENV=1
   fi
 fi
