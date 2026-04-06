@@ -42,6 +42,11 @@ extern "C" {
                 const int* m, const int* n, const double* alpha,
                 const double* a, const int* lda, double* b, const int* ldb);
 
+    // Matrix-vector multiply: y = alpha * op(A) * x + beta * y
+    void dgemv_(const char* trans, const int* m, const int* n,
+                const double* alpha, const double* a, const int* lda,
+                const double* x, const int* incx,
+                const double* beta, double* y, const int* incy);
 }
 
 
@@ -299,13 +304,21 @@ py::dict predict_gp_lapack(
     const double* K_qr = static_cast<const double*>(K_qr_buf.ptr);
     const double* alpha = static_cast<const double*>(alpha_buf.ptr);
 
-    // Compute mean: K_qr @ alpha (naive but correct)
+    // Compute mean: K_qr @ alpha using BLAS dgemv
+    // K_qr is C-order (n × m): K_qr[i,j] at position i*m + j
+    // BLAS interprets as F-order (m × n): element (row,col) at position col*m + row
+    // So BLAS sees K_qr^T (since element (j,i) is at position i*m + j = K_qr[i,j])
+    // With trans='T': computes mean = (K_qr^T)^T @ alpha = K_qr @ alpha ✓
     std::vector<double> mean(n, 0.0);
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < m; ++j) {
-            mean[i] += K_qr[i * m + j] * alpha[j];
-        }
-    }
+    const char trans = 'T';
+    const int m_blas = m;  // First dim of matrix in F-order (m × n)
+    const int n_blas = n;  // Second dim of matrix in F-order
+    const double alpha_blas = 1.0;
+    const double beta_blas = 0.0;
+    const int inc = 1;
+
+    dgemv_(&trans, &m_blas, &n_blas, &alpha_blas, K_qr, &m_blas,
+           alpha, &inc, &beta_blas, mean.data(), &inc);
 
     // Copy mean to Python-owned array
     // CRITICAL: Must pass shape as std::vector, not raw int (stride=0 bug!)
