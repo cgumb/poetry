@@ -32,13 +32,37 @@ source scripts/activate_env.sh
 # source scripts/activate_env.sh --gpu
 ```
 
-**Note**: The Slurm scripts handle activation automatically.
+**Note**:
+- For cluster use: Submit jobs with `sbatch` (recommended)
+- For interactive use: If already on a compute node, can run `bash scripts/test_benchmarks.sh`
+- The Slurm scripts handle environment activation automatically
 
 ---
 
 ## Quick Start
 
-### Run All Pedagogical Benchmarks (Recommended)
+### First: Test the Benchmarks (1 minute)
+
+```bash
+cd ~/poetry
+sbatch scripts/test_benchmarks.slurm
+```
+
+This runs a quick smoke test with tiny problem sizes to verify everything works.
+
+**Time**: ~1 minute
+**Output**: `results/benchmark_test_JOBID/`
+
+Check the output:
+```bash
+tail results/test_benchmarks_*.out
+```
+
+Look for "ALL TESTS PASSED ✓" at the end.
+
+---
+
+### Then: Run All Pedagogical Benchmarks
 
 ```bash
 cd ~/poetry
