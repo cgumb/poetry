@@ -77,10 +77,9 @@ py::array_t<double> rbf_kernel(
     const double* x1 = static_cast<const double*>(x1_buf.ptr);
     const double* x2 = static_cast<const double*>(x2_buf.ptr);
 
-    // Allocate output
-    auto K_py = py::array_t<double>({n1, n2});
-    auto K_buf = K_py.request();
-    double* K = static_cast<double*>(K_buf.ptr);
+    // Allocate output (C-order array)
+    auto K_py = py::array_t<double>(std::vector<ssize_t>{n1, n2});
+    double* K = K_py.mutable_data();
 
     // Compute pairwise squared distances
     const double inv_2l2 = -0.5 / (length_scale * length_scale);
@@ -326,12 +325,11 @@ py::dict predict_gp_lapack(
         throw std::runtime_error("chol_lower must be (m × m)");
 
     // Copy K_qr^T for triangular solve (LAPACK modifies in-place)
+    // K_qr is C-order (n, m): element (i, j) at position [i*m + j]
+    // K_qr^T column-major (m, n): element (j, i) at position [i*m + j]
+    // Since K_qr^T(j, i) = K_qr(i, j), same memory layout → direct copy!
     std::vector<double> K_qr_T(m * n);
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < m; ++j) {
-            K_qr_T[j * n + i] = K_qr[i * m + j];
-        }
-    }
+    std::memcpy(K_qr_T.data(), K_qr, m * n * sizeof(double));
 
     // Solve: v = L^{-1} @ K_qr^T (where L is lower Cholesky factor)
     // Using dtrsm: B = alpha * op(A)^{-1} * B
@@ -352,11 +350,13 @@ py::dict predict_gp_lapack(
            chol_copy.data(), &m_int, K_qr_T.data(), &m_int);
 
     // Compute variance: variance - sum(v^2, axis=0)
+    // After dtrsm, K_qr_T contains V in column-major (m, n)
+    // Element V(j, i) is at position [i * m + j]
     std::vector<double> var(n);
-    for (int i = 0; i < n; ++i) {
+    for (int i = 0; i < n; ++i) {  // for each query point (column i)
         double sum_sq = 0.0;
-        for (int j = 0; j < m; ++j) {
-            double val = K_qr_T[j * n + i];
+        for (int j = 0; j < m; ++j) {  // sum over rows
+            double val = K_qr_T[i * m + j];  // V(j, i)
             sum_sq += val * val;
         }
         var[i] = std::max(0.0, variance - sum_sq);  // Clamp to non-negative

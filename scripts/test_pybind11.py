@@ -98,11 +98,11 @@ def test_predict_correctness() -> None:
 
     # Predict with scipy (reference)
     mean_scipy, var_scipy = predict_block(state, x_query, compute_variance=True)
-    print(f"✓ scipy predict: mean ∈ [{mean_scipy.min():.3f}, {mean_scipy.max():.3f}]")
+    print(f"✓ scipy predict: mean ∈ [{mean_scipy.min():.3f}, {mean_scipy.max():.3f}], var ∈ [{var_scipy.min():.3f}, {var_scipy.max():.3f}]")
 
     # Predict with native LAPACK
     mean_native, var_native = predict_native(state, x_query, compute_variance=True)
-    print(f"✓ native predict: mean ∈ [{mean_native.min():.3f}, {mean_native.max():.3f}]")
+    print(f"✓ native predict: mean ∈ [{mean_native.min():.3f}, {mean_native.max():.3f}], var ∈ [{var_native.min():.3f}, {var_native.max():.3f}]")
 
     # Compare results
     mean_diff = np.linalg.norm(mean_scipy - mean_native)
