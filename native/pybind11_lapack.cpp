@@ -308,11 +308,10 @@ py::dict predict_gp_lapack(
     }
 
     // Copy mean to Python-owned array
-    auto mean_py = py::array_t<double>(n);
-    auto mean_buf = mean_py.mutable_unchecked<1>();
-    for (int i = 0; i < n; ++i) {
-        mean_buf(i) = mean[i];
-    }
+    // CRITICAL: Must pass shape as std::vector, not raw int (stride=0 bug!)
+    auto mean_py = py::array_t<double>(std::vector<ssize_t>{n});
+    double* mean_out = mean_py.mutable_data();
+    std::memcpy(mean_out, mean.data(), n * sizeof(double));
 
     py::dict result;
     result["mean"] = mean_py;
@@ -364,11 +363,10 @@ py::dict predict_gp_lapack(
     }
 
     // Copy variance to Python-owned array
-    auto var_py = py::array_t<double>(n);
-    auto var_buf = var_py.mutable_unchecked<1>();
-    for (int i = 0; i < n; ++i) {
-        var_buf(i) = var[i];
-    }
+    // CRITICAL: Must pass shape as std::vector, not raw int (stride=0 bug!)
+    auto var_py = py::array_t<double>(std::vector<ssize_t>{n});
+    double* var_out = var_py.mutable_data();
+    std::memcpy(var_out, var.data(), n * sizeof(double));
 
     result["variance"] = var_py;
     return result;
