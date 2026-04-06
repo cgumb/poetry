@@ -12,7 +12,7 @@ from ..kernel import rbf_kernel
 from .scalapack_fit import fit_exact_gp_scalapack_from_rated
 from .native_lapack import fit_exact_gp_native, predict_native, is_native_available
 from .scoring import score_all_with_fallback, try_create_daemon_client
-from .gpu_scoring import score_all_gpu, is_gpu_available
+from .gpu_scoring import score_all_gpu, is_gpu_available, compute_spatial_variance_reduction_gpu
 from .backend_selection import select_fit_backend, select_score_backend
 
 
@@ -438,11 +438,23 @@ def run_blocked_step(
 
             elif exploration_strategy == "spatial_variance":
                 # Spatial variance reduction: pick point that reduces mean uncertainty most
-                # Considers spatial correlation between candidates
+                # Considers spatial correlation between candidates (O(n²) operation)
                 # Tends to give more diverse exploration than max_variance
-                svr_scores = _compute_spatial_variance_reduction_scores(
-                    embeddings, variance_arr, state, excluded_mask
-                )
+                # Use GPU if available for 10-50× speedup on large problems
+                if is_gpu_available():
+                    try:
+                        svr_scores, _ = compute_spatial_variance_reduction_gpu(
+                            embeddings, variance_arr, state, excluded_mask
+                        )
+                    except Exception:
+                        # Fall back to CPU if GPU fails
+                        svr_scores = _compute_spatial_variance_reduction_scores(
+                            embeddings, variance_arr, state, excluded_mask
+                        )
+                else:
+                    svr_scores = _compute_spatial_variance_reduction_scores(
+                        embeddings, variance_arr, state, excluded_mask
+                    )
                 explore_index = int(np.argmax(svr_scores))
 
             elif exploration_strategy == "expected_improvement":
