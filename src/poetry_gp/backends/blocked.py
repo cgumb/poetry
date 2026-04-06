@@ -40,7 +40,6 @@ def _compute_spatial_variance_reduction_scores(
     variance_arr: np.ndarray,
     state: GPState,
     excluded_mask: np.ndarray,
-    max_candidates: int = 10000,
 ) -> np.ndarray:
     """
     Compute spatial variance reduction for each candidate.
@@ -61,58 +60,17 @@ def _compute_spatial_variance_reduction_scores(
     Complexity: O(n² × d) for pairwise kernel + O(n²) for scoring
     This is expensive but gives more spatially diverse exploration.
 
-    For large n (> max_candidates), uses approximate method with random sampling
-    to reduce from O(n²) to O(n × max_candidates).
-
     Args:
         embeddings: All candidate embeddings (n, d)
         variance_arr: Posterior variances for all candidates (n,)
         state: GP state with hyperparameters
         excluded_mask: Mask of points to exclude (n,)
-        max_candidates: Max candidates for exact method (default 10k)
 
     Returns:
         scores: Spatial variance reduction score for each candidate (n,)
     """
     n = embeddings.shape[0]
 
-    # For large n, use approximate method
-    if n > max_candidates:
-        # Sample a subset of candidates for distance computation
-        # This gives approximate SVR scores but is O(n × max_candidates) instead of O(n²)
-        rng = np.random.default_rng(42)  # Fixed seed for reproducibility
-        sample_size = max_candidates
-        sample_indices = rng.choice(n, size=sample_size, replace=False)
-        sampled_embeddings = embeddings[sample_indices]
-
-        # Compute kernel between all candidates and sampled subset
-        # K(all, sample): (n × sample_size)
-        k_cs = rbf_kernel(
-            embeddings,
-            sampled_embeddings,
-            length_scale=state.length_scale,
-            variance=state.variance,
-        )
-
-        # Approximate SVR using sampled points: SVR(x*) ≈ Σ_j∈sample k(x_j, x*)² / (σ²(x*) + σ_n²)
-        # Scale by n/sample_size to approximate full sum
-        spatial_variance_reduction = np.zeros(n, dtype=np.float64)
-        noise_var = state.noise ** 2
-        scale_factor = n / sample_size
-
-        for i in range(n):
-            if excluded_mask[i]:
-                continue
-            denom = variance_arr[i] + noise_var
-            if denom <= 0:
-                continue
-            # Sum over sampled points
-            k_row = k_cs[i, :]
-            spatial_variance_reduction[i] = scale_factor * np.sum(k_row ** 2) / denom
-
-        return spatial_variance_reduction
-
-    # For small n, use exact method
     # Compute pairwise kernel matrix K(candidates, candidates)
     # This is the expensive part: O(n² × d)
     k_cc = rbf_kernel(
