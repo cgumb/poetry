@@ -87,16 +87,54 @@ py::array_t<double> rbf_kernel(
     auto K_py = py::array_t<double>(std::vector<ssize_t>{n1, n2});
     double* K = K_py.mutable_data();
 
-    // Compute pairwise squared distances (naive but correct)
     const double inv_2l2 = -0.5 / (length_scale * length_scale);
 
+    // Optimized distance computation using BLAS dgemm:
+    // dist_sq[i,j] = ||x1[i]||^2 + ||x2[j]||^2 - 2 * x1[i] @ x2[j]^T
+
+    // Step 1: Compute squared norms
+    std::vector<double> norm1_sq(n1);
+    std::vector<double> norm2_sq(n2);
+
+    for (int i = 0; i < n1; ++i) {
+        double sum = 0.0;
+        for (int k = 0; k < d; ++k) {
+            double val = x1[i * d + k];
+            sum += val * val;
+        }
+        norm1_sq[i] = sum;
+    }
+
+    for (int j = 0; j < n2; ++j) {
+        double sum = 0.0;
+        for (int k = 0; k < d; ++k) {
+            double val = x2[j * d + k];
+            sum += val * val;
+        }
+        norm2_sq[j] = sum;
+    }
+
+    // Step 2: Compute cross term K = -2 * x1 @ x2^T using BLAS dgemm
+    // x1 is C-order (n1 × d), x2 is C-order (n2 × d)
+    // BLAS sees them as F-order: x1_F (d × n1), x2_F (d × n2)
+    // We want K = x1 @ x2^T, which in BLAS F-order is K^T = x2 @ x1^T
+    // So compute: K_F = x2_F^T @ x1_F (with BLAS treating C-order as F-order)
+    const char transa = 'T';  // Transpose x2: (d × n2) -> (n2 × d)
+    const char transb = 'N';  // No transpose x1: (d × n1)
+    const int m_dgemm = n2;   // Result is (n2 × n1) in F-order = (n1 × n2) in C-order
+    const int n_dgemm = n1;
+    const int k_dgemm = d;
+    const double alpha_dgemm = -2.0;
+    const double beta_dgemm = 0.0;
+
+    dgemm_(&transa, &transb, &m_dgemm, &n_dgemm, &k_dgemm,
+           &alpha_dgemm, x2, &k_dgemm, x1, &k_dgemm,
+           &beta_dgemm, K, &m_dgemm);
+
+    // Step 3: Add squared norms and apply exp
     for (int i = 0; i < n1; ++i) {
         for (int j = 0; j < n2; ++j) {
-            double dist_sq = 0.0;
-            for (int k = 0; k < d; ++k) {
-                double diff = x1[i * d + k] - x2[j * d + k];
-                dist_sq += diff * diff;
-            }
+            double dist_sq = norm1_sq[i] + norm2_sq[j] + K[i * n2 + j];
             K[i * n2 + j] = variance * std::exp(inv_2l2 * dist_sq);
         }
     }
