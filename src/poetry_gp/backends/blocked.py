@@ -164,7 +164,7 @@ def run_blocked_step(
     optimize_hyperparameters: bool = False,
     optimizer_maxiter: int = 50,
     fit_backend: str = "python",
-    score_backend: str = "python",  # "python", "daemon", "auto", "gpu", "none"
+    score_backend: str = "python",  # "python", "native_lapack", "daemon", "auto", "gpu", "none"
     exploitation_strategy: str = "max_mean",  # "max_mean", "ucb", "lcb", "thompson"
     exploration_strategy: str = "max_variance",  # "max_variance", "spatial_variance", "expected_improvement"
     ucb_beta: float = 2.0,  # Confidence parameter for UCB/LCB strategies
@@ -282,6 +282,32 @@ def run_blocked_step(
                 state,
                 embeddings[start:stop],
                 compute_variance=need_variance_for_scoring,
+            )
+            if compute_mean:
+                mean[start:stop] = mu_block
+            if compute_variance and var_block is not None:
+                variance_arr[start:stop] = var_block
+        score_seconds_inner = 0.0
+
+    elif score_backend == "native_lapack":
+        # PyBind11 LAPACK scoring (in-memory, multi-threaded BLAS)
+        # Faster than Python for large n due to better BLAS utilization
+        if not is_native_available():
+            raise ImportError(
+                "native_lapack backend requires poetry_gp_native module. "
+                "Build with: make native-build (requires PyBind11)"
+            )
+
+        mean = np.empty(n, dtype=np.float64) if compute_mean else np.empty(0, dtype=np.float64)
+        variance_arr = np.empty(n, dtype=np.float64) if compute_variance else np.empty(0, dtype=np.float64)
+
+        # Process in blocks to manage memory
+        for start in range(0, n, block_size):
+            stop = min(start + block_size, n)
+            mu_block, var_block = predict_native(
+                state,
+                embeddings[start:stop],
+                compute_variance=compute_variance,
             )
             if compute_mean:
                 mean[start:stop] = mu_block
