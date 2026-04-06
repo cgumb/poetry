@@ -104,30 +104,26 @@ py::array_t<double> rbf_kernel(
  * Fit GP using LAPACK Cholesky factorization.
  *
  * Computes:
- *   U = cholesky(K_rr)  [upper Cholesky: K = U^T * U]
- *   alpha = U^{-1} * U^{-T} * y
- *   logdet = 2 * sum(log(diag(U)))
- *
- * Note: We use upper Cholesky (uplo='U') because K_rr is C-order (row-major)
- * but LAPACK expects column-major. For symmetric K, the lower triangle in
- * row-major appears as upper triangle in column-major.
+ *   L = cholesky(K_rr)  [lower Cholesky: K = L * L^T]
+ *   alpha = L^{-T} * L^{-1} * y
+ *   logdet = 2 * sum(log(diag(L)))
  *
  * Args:
- *   K_rr: (m × m) kernel matrix (C-order, symmetric)
+ *   K_rr: (m × m) kernel matrix (any order - will be converted internally)
  *   y: (m,) observation vector
  *   return_chol: Whether to return Cholesky factor (for variance computation)
  *
  * Returns:
  *   dict with keys:
  *     - alpha: (m,) solution vector
- *     - chol_lower: (m × m) lower Cholesky factor (only if return_chol=True)
+ *     - chol_lower: (m × m) lower Cholesky factor in F-order (only if return_chol=True)
  *     - logdet: scalar log-determinant
  *     - info_potrf: LAPACK info code for Cholesky
  *     - info_potrs: LAPACK info code for solve
  */
 py::dict fit_gp_lapack(
-    py::array_t<double, py::array::c_style | py::array::forcecast> K_rr_py,
-    py::array_t<double, py::array::c_style | py::array::forcecast> y_py,
+    py::array_t<double> K_rr_py,  // Accept any order
+    py::array_t<double> y_py,
     bool return_chol = true
 ) {
     auto K_rr_buf = K_rr_py.request();
@@ -140,26 +136,34 @@ py::dict fit_gp_lapack(
 
     int m = static_cast<int>(K_rr_buf.shape[0]);
 
-    // Copy K_rr directly - symmetric matrix so transpose doesn't matter for correctness
-    // But we need to ensure LAPACK gets data in column-major format
+    // Convert K_rr to Fortran-order (column-major) for LAPACK
+    // LAPACK expects column-major layout
     const double* K_rr = static_cast<const double*>(K_rr_buf.ptr);
     std::vector<double> chol(m * m);
 
-    // K_rr is C-contiguous (row-major): element (i,j) at i*m + j
-    // LAPACK expects column-major: element (i,j) at j*m + i
-    // For a symmetric matrix K, we have K(i,j) = K(j,i)
-    // So we can use the transpose property: just copy row-major as-is
-    // and tell LAPACK it's upper triangle, or transpose during copy
-    std::memcpy(chol.data(), K_rr, m * m * sizeof(double));
+    // Check if input is already Fortran-order
+    bool is_f_order = (K_rr_buf.strides[0] == sizeof(double) &&
+                       K_rr_buf.strides[1] == m * sizeof(double));
+
+    if (is_f_order) {
+        // Already column-major, just copy
+        std::memcpy(chol.data(), K_rr, m * m * sizeof(double));
+    } else {
+        // C-order (row-major): transpose during copy to get column-major
+        // C-order element (i,j) at position i*m + j
+        // F-order element (i,j) at position j*m + i
+        for (int i = 0; i < m; ++i) {
+            for (int j = 0; j < m; ++j) {
+                chol[j * m + i] = K_rr[i * m + j];
+            }
+        }
+    }
 
     std::vector<double> alpha(m);
     std::memcpy(alpha.data(), y_buf.ptr, m * sizeof(double));
 
-    // Cholesky factorization: A = U^T * U (using upper triangle)
-    // We use 'U' because K_rr is C-contiguous (row-major) but LAPACK expects column-major
-    // For symmetric K, reading row-major as column-major gives K^T = K
-    // But the lower triangle of K in row-major appears as upper triangle in column-major
-    const char uplo = 'U';
+    // Cholesky factorization: A = L * L^T (lower triangle)
+    const char uplo = 'L';
     int info_potrf = 0;
     dpotrf_(&uplo, &m, chol.data(), &m, &info_potrf);
 
@@ -170,10 +174,10 @@ py::dict fit_gp_lapack(
         );
     }
 
-    // Compute logdet: 2 * sum(log(diag(U)))
+    // Compute logdet: 2 * sum(log(diag(L)))
     double logdet = 0.0;
     for (int i = 0; i < m; ++i) {
-        // Diagonal element (i,i) - same position in both C and Fortran order
+        // Diagonal element (i,i) at position i*m + i in column-major
         double diag_val = chol[i * m + i];
         if (diag_val <= 0.0) {
             throw std::runtime_error("Non-positive diagonal in Cholesky factor");
@@ -181,7 +185,7 @@ py::dict fit_gp_lapack(
         logdet += 2.0 * std::log(diag_val);
     }
 
-    // Solve for alpha: K_rr * alpha = y using upper Cholesky
+    // Solve for alpha: K_rr * alpha = y using lower Cholesky
     int nrhs = 1;
     int info_potrs = 0;
     dpotrs_(&uplo, &m, &nrhs, chol.data(), &m, alpha.data(), &m, &info_potrs);
@@ -208,18 +212,15 @@ py::dict fit_gp_lapack(
     result["info_potrs"] = info_potrs;
 
     if (return_chol) {
-        // Zero out lower triangle (LAPACK only fills upper with uplo='U')
-        // In column-major: element (i,j) is at j*m + i
+        // Zero out upper triangle (LAPACK only fills lower with uplo='L')
         for (int i = 0; i < m; ++i) {
-            for (int j = 0; j < i; ++j) {
-                chol[j * m + i] = 0.0;  // Column-major indexing
+            for (int j = i + 1; j < m; ++j) {
+                chol[j * m + i] = 0.0;  // Column-major: element (i,j) at j*m+i
             }
         }
 
-        // Copy chol to Python-owned Fortran-order array
-        // chol contains upper U, but we transpose during copy to return lower L = U^T
-        // Reading chol[j*m+i] (element (j,i) in C-order) and writing to chol_buf(i,j)
-        // transposes: chol_buf(i,j) = U(j,i) = U^T(i,j) = L(i,j)
+        // Return lower Cholesky in Fortran-order (column-major)
+        // chol is already in column-major format
         auto chol_py = py::array_t<double>(
             {m, m},                                    // shape
             {sizeof(double), m * sizeof(double)}      // strides: column-major
@@ -227,7 +228,7 @@ py::dict fit_gp_lapack(
         auto chol_buf = chol_py.mutable_unchecked<2>();
         for (int i = 0; i < m; ++i) {
             for (int j = 0; j < m; ++j) {
-                chol_buf(i, j) = chol[j * m + i];  // Transpose: read (j,i), write to (i,j)
+                chol_buf(i, j) = chol[j * m + i];  // Read from column-major storage
             }
         }
         result["chol_lower"] = chol_py;

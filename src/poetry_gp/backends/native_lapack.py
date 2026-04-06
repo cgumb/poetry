@@ -88,12 +88,14 @@ def fit_exact_gp_native(
     t0 = perf_counter()
 
     # Compute kernel matrix: K_rr = rbf_kernel(x_rated, x_rated) + noise^2 * I
+    # Use Fortran-order for direct LAPACK compatibility (avoids transpose in C++)
     K_rr = rbf_kernel_python(x_rated, x_rated, length_scale=length_scale, variance=variance)
+    K_rr = np.asfortranarray(K_rr)  # Convert to column-major
     K_rr.flat[:: K_rr.shape[0] + 1] += noise * noise
 
     kernel_seconds = perf_counter() - t0
 
-    # Fit using native LAPACK
+    # Fit using native LAPACK (K_rr is already Fortran-order)
     fit_start = perf_counter()
     result = poetry_gp_native.fit_gp_lapack(K_rr, y_rated, return_chol=return_chol)
     fit_seconds = perf_counter() - fit_start
