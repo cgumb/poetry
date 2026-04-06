@@ -1267,22 +1267,16 @@ int main(int argc, char** argv) {
     result.requested_backend = args.backend;
 
     if (rank == 0) {
-      // Only write outputs that were actually gathered
+      // Only write outputs that were actually gathered (no placeholders!)
       if (result.has_alpha) {
         write_binary_vector(args.alpha_bin, result.alpha);
-      } else if (!args.alpha_bin.empty()) {
-        // If output path specified but not gathered, write empty/zero placeholder
-        std::vector<double> empty_alpha(n, 0.0);
-        write_binary_vector(args.alpha_bin, empty_alpha);
       }
+      // Note: If alpha not gathered, do NOT write anything (Python checks has_alpha)
 
       if (result.has_chol) {
         write_binary_matrix(args.chol_bin, result.chol);
-      } else if (!args.chol_bin.empty()) {
-        // If output path specified but not gathered, write empty/zero placeholder
-        std::vector<double> empty_chol(n * n, 0.0);
-        write_binary_matrix(args.chol_bin, empty_chol);
       }
+      // Note: If chol not gathered, do NOT write anything (Python checks has_chol)
 
       write_output_meta(args.output_meta, result, n, size);
       std::cerr << "[scalapack_gp_fit] backend=" << result.backend << " requested=" << result.requested_backend << " n=" << n << " ranks=" << size << "\n";

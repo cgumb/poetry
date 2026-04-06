@@ -14,8 +14,8 @@ from ..gp_exact import GPState
 
 @dataclass
 class ScaLAPACKFitResult:
-    alpha: np.ndarray
-    chol_lower: np.ndarray
+    alpha: np.ndarray | None  # None if return_alpha=False
+    chol_lower: np.ndarray | None  # None if return_chol=False
     logdet: float
     factor_seconds: float
     solve_seconds: float
@@ -338,16 +338,16 @@ def _run_prepared_fit(
     has_alpha = bool(meta.get("has_alpha", True))  # Default True for backward compatibility
     has_chol = bool(meta.get("has_chol", True))
 
-    # Only read outputs that were actually gathered
+    # Only read outputs that were actually gathered (no placeholder allocations!)
     if has_alpha:
         alpha = np.fromfile(prepared.alpha_bin_path, dtype=np.float64, count=n)
     else:
-        alpha = np.zeros(n, dtype=np.float64)
+        alpha = None  # No allocation - save memory!
 
     if has_chol:
         chol = np.fromfile(prepared.chol_bin_path, dtype=np.float64, count=n * n).reshape(n, n)
     else:
-        chol = np.zeros((n, n), dtype=np.float64)
+        chol = None  # No allocation - for m=20k this saves 3.2 GB!
 
     result = ScaLAPACKFitResult(
         alpha=alpha,
@@ -542,11 +542,15 @@ def fit_exact_gp_scalapack_from_rated(
         workdir=workdir,
         verbose=verbose,
     )
+    # Validate critical outputs
+    if result.alpha is None:
+        raise RuntimeError("Native fit did not return alpha (should always be gathered)")
+
     lml = -0.5 * float(y_rated @ result.alpha) - 0.5 * float(result.logdet) - 0.5 * len(y_rated) * np.log(2.0 * np.pi)
 
     # Only include cho_factor_data if Cholesky was actually returned
     cho_factor_data = None
-    if return_chol and np.any(result.chol_lower != 0):
+    if result.chol_lower is not None:
         cho_factor_data = (result.chol_lower, True)
 
     return GPState(
