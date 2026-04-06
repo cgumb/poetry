@@ -3,7 +3,10 @@ Test script to verify analytic gradient implementation for GP hyperparameter opt
 
 This compares optimization with analytic gradients vs numerical gradients to verify:
 1. Analytic gradients are correct (produce similar results)
-2. Analytic gradients are faster
+2. Analytic gradients reduce function evaluations (fewer nfev)
+
+Note: Wall-clock time may vary. Analytic gradients reduce evaluations but add
+gradient computation overhead, so speedup depends on problem size and backend.
 """
 
 from __future__ import annotations
@@ -158,7 +161,13 @@ def main():
 
     print("\n" + "=" * 60)
     print("Summary:")
-    print(f"  Analytic gradients are {time_numerical / time_analytic:.1f}× faster")
+    speedup = time_numerical / time_analytic
+    if speedup > 1.0:
+        print(f"  Analytic gradients: {speedup:.1f}× faster")
+    elif speedup < 1.0:
+        print(f"  Analytic gradients: {1/speedup:.1f}× slower (but fewer function evaluations)")
+    else:
+        print(f"  Analytic gradients: similar speed")
     print("  Both methods produce similar results (gradients verified)")
     print("=" * 60)
 
