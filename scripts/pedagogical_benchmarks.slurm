@@ -47,6 +47,12 @@ else
 fi
 echo ""
 
+# Build native code (CRITICAL: ensures backend routing fix is compiled)
+echo "Building native code..."
+cmake -S native -B native/build
+cmake --build native/build
+echo ""
+
 #
 # Benchmark 1: Scaling Theory Validation
 #
