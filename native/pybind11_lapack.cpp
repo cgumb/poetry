@@ -159,8 +159,22 @@ py::dict fit_gp_lapack(
         }
     }
 
+    // Copy y to alpha, handling non-contiguous arrays
     std::vector<double> alpha(m);
-    std::memcpy(alpha.data(), y_buf.ptr, m * sizeof(double));
+    const double* y = static_cast<const double*>(y_buf.ptr);
+
+    // Check if y is contiguous
+    bool y_contiguous = (y_buf.strides[0] == sizeof(double));
+
+    if (y_contiguous) {
+        std::memcpy(alpha.data(), y, m * sizeof(double));
+    } else {
+        // Handle non-contiguous y by using stride
+        ssize_t stride = y_buf.strides[0] / sizeof(double);
+        for (int i = 0; i < m; ++i) {
+            alpha[i] = y[i * stride];
+        }
+    }
 
     // Cholesky factorization: A = L * L^T (lower triangle)
     const char uplo = 'L';
@@ -185,6 +199,14 @@ py::dict fit_gp_lapack(
         logdet += 2.0 * std::log(diag_val);
     }
 
+    // Debug: print alpha before solve
+    std::fprintf(stderr, "\nDEBUG fit_gp_lapack: m=%d\n", m);
+    std::fprintf(stderr, "alpha before dpotrs: [");
+    for (int i = 0; i < m; ++i) {
+        std::fprintf(stderr, "%.6f%s", alpha[i], i < m-1 ? ", " : "");
+    }
+    std::fprintf(stderr, "]\n");
+
     // Solve for alpha: K_rr * alpha = y using lower Cholesky
     int nrhs = 1;
     int info_potrs = 0;
@@ -195,6 +217,14 @@ py::dict fit_gp_lapack(
             "Linear solve failed with info=" + std::to_string(info_potrs)
         );
     }
+
+    // Debug: print alpha after solve
+    std::fprintf(stderr, "alpha after dpotrs:  [");
+    for (int i = 0; i < m; ++i) {
+        std::fprintf(stderr, "%.6f%s", alpha[i], i < m-1 ? ", " : "");
+    }
+    std::fprintf(stderr, "]\n");
+    std::fprintf(stderr, "info_potrs=%d\n\n", info_potrs);
 
     // Build result dictionary with Python-owned arrays
     py::dict result;

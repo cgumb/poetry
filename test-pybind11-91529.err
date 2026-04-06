@@ -1,0 +1,13 @@
+[1;93m==>[0m Warning: could not unload runtime environment due to UnknownPackageError: Package 'spack_repo.builtin.packages.py_ipython_pygments_lexers.package' not found in repository '/shared/spack-packages/repos/spack_repo/builtin'
+    Use 'spack create' to create a new package.
+[1;93m==>[0m Warning: could not load runtime environment due to UnknownPackageError: Package 'spack_repo.builtin.packages.py_ipython_pygments_lexers.package' not found in repository '/shared/spack-packages/repos/spack_repo/builtin'
+    Use 'spack create' to create a new package.
+CMake Warning:
+  Ignoring extra path from command line:
+
+   "../.."
+
+
+CMake Error: The source directory "/shared/home/cwg194/poetry" does not appear to contain CMakeLists.txt.
+Specify --help for usage, or press the help button on the CMake GUI.
+make: *** [Makefile:19: native-build] Error 1

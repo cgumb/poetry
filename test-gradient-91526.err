@@ -1,0 +1,4 @@
+[1;93m==>[0m Warning: could not unload runtime environment due to UnknownPackageError: Package 'spack_repo.builtin.packages.py_ipython_pygments_lexers.package' not found in repository '/shared/spack-packages/repos/spack_repo/builtin'
+    Use 'spack create' to create a new package.
+[1;93m==>[0m Warning: could not load runtime environment due to UnknownPackageError: Package 'spack_repo.builtin.packages.py_ipython_pygments_lexers.package' not found in repository '/shared/spack-packages/repos/spack_repo/builtin'
+    Use 'spack create' to create a new package.

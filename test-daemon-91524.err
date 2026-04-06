@@ -1,0 +1,37 @@
+[1;93m==>[0m Warning: could not unload runtime environment due to UnknownPackageError: Package 'spack_repo.builtin.packages.py_ipython_pygments_lexers.package' not found in repository '/shared/spack-packages/repos/spack_repo/builtin'
+    Use 'spack create' to create a new package.
+[1;93m==>[0m Warning: could not load runtime environment due to UnknownPackageError: Package 'spack_repo.builtin.packages.py_ipython_pygments_lexers.package' not found in repository '/shared/spack-packages/repos/spack_repo/builtin'
+    Use 'spack create' to create a new package.
+CMake Deprecation Warning at build/_deps/pybind11-src/CMakeLists.txt:8 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+CMake Warning (dev) at build/_deps/pybind11-src/tools/FindPythonLibsNew.cmake:98 (find_package):
+  Policy CMP0148 is not set: The FindPythonInterp and FindPythonLibs modules
+  are removed.  Run "cmake --help-policy CMP0148" for policy details.  Use
+  the cmake_policy command to set the policy and suppress this warning.
+
+Call Stack (most recent call first):
+  build/_deps/pybind11-src/tools/pybind11Tools.cmake:50 (find_package)
+  build/_deps/pybind11-src/tools/pybind11Common.cmake:188 (include)
+  build/_deps/pybind11-src/CMakeLists.txt:210 (include)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning at build/_deps/pybind11-src/tools/pybind11Tools.cmake:177 (add_library):
+  Cannot generate a safe runtime search path for target poetry_gp_native
+  because files in some directories may conflict with libraries in implicit
+  directories:
+
+    runtime library [libgomp.so.1] in /shared/courseSharedFolders/161588outer/161588/spack/opt/spack/linux-cascadelake/gcc-14.3.0-yugybpay7kr2m3ybgxwzlbdmbzdqhcv3/lib64 may be hidden by files in:
+      /shared/courseSharedFolders/161588outer/161588/spack/var/spack/environments/CS-2050/.spack-env/view/lib
+
+  Some of these libraries may not be found correctly.
+Call Stack (most recent call first):
+  CMakeLists.txt:102 (pybind11_add_module)
+
+
