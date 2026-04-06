@@ -386,17 +386,14 @@ py::dict predict_gp_lapack(
     // Note: chol_lower_py contains L (lower), not U, because fit converts U -> L via transpose
     const char side = 'L';    // A is on the left
     const char uplo = 'L';    // A is lower triangular
-    const char transa = 'N';  // No transpose
+    const char transa_dtrsm = 'N';  // No transpose
     const char diag = 'N';    // Non-unit diagonal
-    const double alpha_val = 1.0;
-    int m_int = m;
-    int n_int = n;
 
     const double* chol = static_cast<const double*>(chol_buf.ptr);
     std::vector<double> chol_copy(m * m);
     std::memcpy(chol_copy.data(), chol, m * m * sizeof(double));
 
-    dtrsm_(&side, &uplo, &transa, &diag, &m_int, &n_int, &alpha_val,
+    dtrsm_(&side, &uplo, &transa_dtrsm, &diag, &m_int, &n_int, &alpha_val,
            chol_copy.data(), &m_int, K_qr_T.data(), &m_int);
 
     // Compute variance: variance - sum(v^2, axis=0)
