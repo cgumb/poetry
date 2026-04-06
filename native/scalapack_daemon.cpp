@@ -462,6 +462,10 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "[Daemon] Shutdown requested\n");
                 shutdown_requested = 1;
 
+                // Broadcast shutdown op code (0) to all ranks so they can exit cleanly
+                int op_code = 0;
+                MPI_Bcast(&op_code, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
                 DaemonResponse resp;
                 resp.status = 0;
                 resp.message = "Shutting down";
@@ -764,6 +768,13 @@ int main(int argc, char** argv) {
             // Non-root ranks: receive operation code and participate
             int op_code;
             MPI_Bcast(&op_code, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+            // Handle shutdown op code
+            if (op_code == 0) {
+                fprintf(stderr, "[Daemon rank %d] Shutdown broadcast received, exiting\n", rank);
+                shutdown_requested = 1;
+                break;
+            }
 
             if (op_code == 2) {
                 // Score operation
