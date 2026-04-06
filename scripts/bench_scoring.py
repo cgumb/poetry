@@ -59,9 +59,11 @@ def main() -> None:
     import numpy as np
     from poetry_gp.backends.blocked import run_blocked_step
     from poetry_gp.backends.gpu_scoring import is_gpu_available
+    from poetry_gp.backends.native_lapack import is_native_available
 
-    # Check GPU availability
+    # Check backend availability
     has_gpu = is_gpu_available()
+    has_native = is_native_available()
 
     print("=" * 60)
     print("GP Scoring Performance Benchmark")
@@ -69,6 +71,7 @@ def main() -> None:
     print(f"n_candidates: {args.n_candidates:,}")
     print(f"dim: {args.dim}")
     print(f"m_rated values: {args.m_rated}")
+    print(f"Native LAPACK available: {has_native}")
     print(f"GPU available: {has_gpu}")
     if args.cpu_threads:
         print(f"CPU threads (multi): {args.cpu_threads}")
@@ -151,7 +154,37 @@ def main() -> None:
         })
         print(f"score={result.profile.score_seconds:.3f}s")
 
-        # 3. GPU (if available)
+        # 3. Native LAPACK (if available)
+        if has_native:
+            print("  Native LAPACK (PyBind11)...", end=" ", flush=True)
+            try:
+                result = run_blocked_step(
+                    embeddings,
+                    rated_indices,
+                    ratings,
+                    length_scale=1.0,
+                    variance=1.0,
+                    noise=1e-3,
+                    fit_backend="native_lapack",
+                    score_backend="native_lapack",
+                    block_size=2048,
+                )
+
+                results.append({
+                    "m_rated": m_rated,
+                    "n_candidates": args.n_candidates,
+                    "dim": args.dim,
+                    "score_backend": "native_lapack",
+                    "num_threads": None,
+                    "fit_seconds": result.profile.fit_seconds,
+                    "score_seconds": result.profile.score_seconds,
+                    "total_seconds": result.profile.total_seconds,
+                })
+                print(f"score={result.profile.score_seconds:.3f}s")
+            except Exception as e:
+                print(f"FAILED: {e}")
+
+        # 4. GPU (if available)
         if has_gpu:
             print("  GPU (CuPy)...", end=" ", flush=True)
             try:
@@ -205,28 +238,33 @@ def main() -> None:
 
     # Print summary
     print("\nSummary (score_seconds only):")
-    print("-" * 60)
-    print(f"{'m_rated':<10} {'CPU (1t)':<12} {'CPU (Mt)':<12} {'GPU':<12} {'Speedup'}")
-    print("-" * 60)
+    print("-" * 80)
+    print(f"{'m_rated':<10} {'CPU (1t)':<12} {'CPU (Mt)':<12} {'Native':<12} {'GPU':<12} {'Best Speedup'}")
+    print("-" * 80)
 
     for m in args.m_rated:
         m_results = [r for r in results if r['m_rated'] == m]
 
         cpu_1t = next((r['score_seconds'] for r in m_results if r['num_threads'] == 1), None)
         cpu_mt = next((r['score_seconds'] for r in m_results if r['num_threads'] != 1 and r['score_backend'] == 'python'), None)
+        native = next((r['score_seconds'] for r in m_results if r['score_backend'] == 'native_lapack'), None)
         gpu = next((r['score_seconds'] for r in m_results if r['score_backend'] == 'gpu'), None)
 
+        # Compute best speedup vs baseline (cpu_1t)
         speedup = ""
-        if gpu and cpu_1t:
-            speedup = f"{cpu_1t/gpu:.1f}x"
+        if cpu_1t:
+            best_time = min(filter(None, [cpu_mt, native, gpu]))
+            if best_time:
+                speedup = f"{cpu_1t/best_time:.1f}x"
 
         cpu_1t_str = f"{cpu_1t:.3f}s" if cpu_1t else "N/A"
         cpu_mt_str = f"{cpu_mt:.3f}s" if cpu_mt else "N/A"
+        native_str = f"{native:.3f}s" if native else "N/A"
         gpu_str = f"{gpu:.3f}s" if gpu else "N/A"
 
-        print(f"{m:<10,} {cpu_1t_str:<12} {cpu_mt_str:<12} {gpu_str:<12} {speedup}")
+        print(f"{m:<10,} {cpu_1t_str:<12} {cpu_mt_str:<12} {native_str:<12} {gpu_str:<12} {speedup}")
 
-    print("-" * 60)
+    print("-" * 80)
 
 
 if __name__ == "__main__":
