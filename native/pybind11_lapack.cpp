@@ -104,12 +104,16 @@ py::array_t<double> rbf_kernel(
  * Fit GP using LAPACK Cholesky factorization.
  *
  * Computes:
- *   L = cholesky(K_rr)
- *   alpha = L^{-T} * L^{-1} * y
- *   logdet = 2 * sum(log(diag(L)))
+ *   U = cholesky(K_rr)  [upper Cholesky: K = U^T * U]
+ *   alpha = U^{-1} * U^{-T} * y
+ *   logdet = 2 * sum(log(diag(U)))
+ *
+ * Note: We use upper Cholesky (uplo='U') because K_rr is C-order (row-major)
+ * but LAPACK expects column-major. For symmetric K, the lower triangle in
+ * row-major appears as upper triangle in column-major.
  *
  * Args:
- *   K_rr: (m × m) kernel matrix (will be modified in-place for Cholesky)
+ *   K_rr: (m × m) kernel matrix (C-order, symmetric)
  *   y: (m,) observation vector
  *   return_chol: Whether to return Cholesky factor (for variance computation)
  *
@@ -136,22 +140,26 @@ py::dict fit_gp_lapack(
 
     int m = static_cast<int>(K_rr_buf.shape[0]);
 
-    // Convert K_rr from C-order (row-major) to Fortran-order (column-major) for LAPACK
-    // C-order: K[i,j] at position i*m + j
-    // Fortran-order: K[i,j] at position j*m + i
+    // Copy K_rr directly - symmetric matrix so transpose doesn't matter for correctness
+    // But we need to ensure LAPACK gets data in column-major format
     const double* K_rr = static_cast<const double*>(K_rr_buf.ptr);
     std::vector<double> chol(m * m);
-    for (int i = 0; i < m; ++i) {
-        for (int j = 0; j < m; ++j) {
-            chol[j * m + i] = K_rr[i * m + j];  // Transpose: row->col, col->row
-        }
-    }
+
+    // K_rr is C-contiguous (row-major): element (i,j) at i*m + j
+    // LAPACK expects column-major: element (i,j) at j*m + i
+    // For a symmetric matrix K, we have K(i,j) = K(j,i)
+    // So we can use the transpose property: just copy row-major as-is
+    // and tell LAPACK it's upper triangle, or transpose during copy
+    std::memcpy(chol.data(), K_rr, m * m * sizeof(double));
 
     std::vector<double> alpha(m);
     std::memcpy(alpha.data(), y_buf.ptr, m * sizeof(double));
 
-    // Cholesky factorization: A = L * L^T
-    const char uplo = 'L';
+    // Cholesky factorization: A = U^T * U (using upper triangle)
+    // We use 'U' because K_rr is C-contiguous (row-major) but LAPACK expects column-major
+    // For symmetric K, reading row-major as column-major gives K^T = K
+    // But the lower triangle of K in row-major appears as upper triangle in column-major
+    const char uplo = 'U';
     int info_potrf = 0;
     dpotrf_(&uplo, &m, chol.data(), &m, &info_potrf);
 
@@ -162,9 +170,10 @@ py::dict fit_gp_lapack(
         );
     }
 
-    // Compute logdet: 2 * sum(log(diag(L)))
+    // Compute logdet: 2 * sum(log(diag(U)))
     double logdet = 0.0;
     for (int i = 0; i < m; ++i) {
+        // Diagonal element (i,i) - same position in both C and Fortran order
         double diag_val = chol[i * m + i];
         if (diag_val <= 0.0) {
             throw std::runtime_error("Non-positive diagonal in Cholesky factor");
@@ -172,7 +181,7 @@ py::dict fit_gp_lapack(
         logdet += 2.0 * std::log(diag_val);
     }
 
-    // Solve for alpha: K_rr * alpha = y
+    // Solve for alpha: K_rr * alpha = y using upper Cholesky
     int nrhs = 1;
     int info_potrs = 0;
     dpotrs_(&uplo, &m, &nrhs, chol.data(), &m, alpha.data(), &m, &info_potrs);
@@ -199,16 +208,18 @@ py::dict fit_gp_lapack(
     result["info_potrs"] = info_potrs;
 
     if (return_chol) {
-        // Zero out upper triangle (LAPACK only fills lower)
+        // Zero out lower triangle (LAPACK only fills upper with uplo='U')
         // In column-major: element (i,j) is at j*m + i
         for (int i = 0; i < m; ++i) {
-            for (int j = i + 1; j < m; ++j) {
+            for (int j = 0; j < i; ++j) {
                 chol[j * m + i] = 0.0;  // Column-major indexing
             }
         }
 
         // Copy chol to Python-owned Fortran-order array
-        // chol is already in column-major (Fortran) format
+        // chol contains upper U, but we transpose during copy to return lower L = U^T
+        // Reading chol[j*m+i] (element (j,i) in C-order) and writing to chol_buf(i,j)
+        // transposes: chol_buf(i,j) = U(j,i) = U^T(i,j) = L(i,j)
         auto chol_py = py::array_t<double>(
             {m, m},                                    // shape
             {sizeof(double), m * sizeof(double)}      // strides: column-major
@@ -216,7 +227,7 @@ py::dict fit_gp_lapack(
         auto chol_buf = chol_py.mutable_unchecked<2>();
         for (int i = 0; i < m; ++i) {
             for (int j = 0; j < m; ++j) {
-                chol_buf(i, j) = chol[j * m + i];  // Read from column-major storage
+                chol_buf(i, j) = chol[j * m + i];  // Transpose: read (j,i), write to (i,j)
             }
         }
         result["chol_lower"] = chol_py;
@@ -312,8 +323,9 @@ py::dict predict_gp_lapack(
         }
     }
 
-    // Solve: v = L^{-1} @ K_qr^T
+    // Solve: v = L^{-1} @ K_qr^T (where L is lower Cholesky factor)
     // Using dtrsm: B = alpha * op(A)^{-1} * B
+    // Note: chol_lower_py contains L (lower), not U, because fit converts U -> L via transpose
     const char side = 'L';    // A is on the left
     const char uplo = 'L';    // A is lower triangular
     const char transa = 'N';  // No transpose
