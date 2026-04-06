@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
 #SBATCH --time=00:10:00
-#SBATCH --partition=shared
+#SBATCH --partition=general
 
 #
 # Quick smoke test for pedagogical benchmarks

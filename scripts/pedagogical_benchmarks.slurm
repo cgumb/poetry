@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=16G
 #SBATCH --time=02:00:00
-#SBATCH --partition=shared
+#SBATCH --partition=general
 
 #
 # Pedagogical Benchmark Suite
