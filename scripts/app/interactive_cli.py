@@ -578,6 +578,7 @@ def main() -> None:
             timing_table.add_row("Fit", f"{result.profile.fit_seconds:.4f}s")
             timing_table.add_row("Optimize", f"{result.profile.optimize_seconds:.4f}s")
             timing_table.add_row("Score", f"{result.profile.score_seconds:.4f}s")
+            timing_table.add_row("Select", f"{result.profile.select_seconds:.4f}s")
             timing_table.add_row("Total", f"{result.profile.total_seconds:.4f}s")
 
             param_table = Table(show_header=False, box=None, padding=(0, 1))
