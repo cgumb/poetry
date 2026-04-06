@@ -53,16 +53,24 @@ class ScaLAPACKDaemonClient:
         os.mkfifo(self.request_pipe)
         os.mkfifo(self.response_pipe)
 
-        # Launch daemon
-        cmd = [
-            self.launcher,
-            "-n", str(self.nprocs),
-            "--bind-to", "none",
-            "--map-by", "slot",
+        # Build launcher command (launcher-specific options)
+        cmd = [self.launcher, "-n", str(self.nprocs)]
+
+        # Add launcher-specific binding options
+        if self.launcher == "mpirun" or self.launcher == "mpiexec":
+            # OpenMPI-specific binding options
+            cmd.extend(["--bind-to", "none", "--map-by", "slot"])
+        elif self.launcher == "srun":
+            # Slurm srun doesn't need binding options for this use case
+            # Could add --cpu-bind=none if needed, but default is fine
+            pass
+
+        # Add daemon executable and pipes
+        cmd.extend([
             str(self.daemon_exe.resolve()),
             str(self.request_pipe),
             str(self.response_pipe),
-        ]
+        ])
 
         print(f"[DaemonClient] Starting daemon with {self.nprocs} processes")
         print(f"[DaemonClient] Command: {' '.join(cmd)}")
