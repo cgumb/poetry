@@ -1,509 +1,305 @@
-# poetry
+# Poetry GP: Learning Poetic Preference with Gaussian Processes and HPC
 
-A student-facing project on **poetry recommendation, exploration, and visualization** using
+An interactive poetry recommendation system that demonstrates HPC principles through **Gaussian process active learning**.
 
-- semantic poem embeddings,
-- an exact Gaussian-process preference model,
-- a manifest-driven multi-source corpus builder,
-- and an HPC-oriented implementation ladder.
+## What It Does
 
-This repository is meant to do two things at once:
+**Learn a reader's taste, then choose what to show next:**
+- User rates poems → System infers preference function → Recommends next poem
+- Balances **exploitation** (show likely favorites) vs **exploration** (ask informative questions)
 
-1. support a genuinely interesting poetry-exploration application, and
-2. make the computational bottlenecks visible enough that profiling, vectorization, batching, and distributed-memory methods feel necessary rather than decorative.
+## The Method
 
-The core idea is simple: treat poems as points in an embedding space, let a user rate poems, fit a Gaussian process over that space, and then use the posterior to choose the next poem either by
+### From Ridge Regression to Gaussian Processes
 
-- **exploit**: show a poem the model currently expects the user to like, or
-- **explore**: show a poem whose rating would be most informative because the model is uncertain there.
+Starting from Bayesian linear regression:
+```
+y = Xβ + ε,  β ~ N(0, τ²I)
+```
 
-## Why this is an HPC project
+The **dual form** leads naturally to kernel methods:
+```
+ŷ* = k*ᵀ (K + λI)⁻¹ y
+```
 
-At each interaction step, the system may need to:
+Generalizing to **Gaussian processes** with RBF kernel:
+```
+k(x,x') = σ²f exp(-||x-x'||² / 2ℓ²)
+```
 
-1. update an exact GP using the poems the user has rated so far,
-2. score a large corpus of candidate poems under the posterior,
-3. compute posterior means, posterior variances, or both,
-4. choose the next poem,
-5. and optionally render heat maps over a 2D projection.
+This gives us:
+- **Posterior mean**: μ(x) = expected preference
+- **Posterior variance**: σ²(x) = uncertainty
+- **Active learning**: Choose next poem by balancing mean and variance
 
-This makes the project a good vehicle for discussing:
+### Computational Bottlenecks
 
-- dense kernel computations,
-- blocking and vectorization,
-- exact GP linear algebra such as Cholesky factorization and triangular solves,
-- profiling and performance breakdowns,
-- distributed-memory scoring over a large candidate set,
-- and, as a stretch, GPU acceleration.
+| Operation | Complexity | Scaling Variable |
+|-----------|-----------|------------------|
+| **GP Fit** | O(m³) | m = rated poems |
+| **Score (mean)** | O(nmd) + O(nm) | n = candidates |
+| **Score (variance)** | O(nm²) | Expensive! |
 
-## Getting started
+For **m = 1000 rated poems, n = 85k candidates**:
+- Fit: 1 billion FLOPs (Cholesky factorization)
+- Score with variance: 85 billion FLOPs (triangular solves)
 
-### CPU-only setup (default)
+## HPC Solutions
 
-For typical HPC workloads with ScaLAPACK fitting:
+### Automatic Backend Selection
+
+The system **automatically chooses** optimal backends based on problem size:
+
+```python
+result = run_blocked_step(
+    embeddings, rated_indices, ratings,
+    fit_backend="auto",      # → native_lapack, python, or scalapack
+    score_backend="auto",    # → gpu, native_lapack, or python
+)
+```
+
+### Fit Backends (O(m³) Cholesky)
+
+| Backend | Method | When to Use |
+|---------|--------|-------------|
+| **Python** | SciPy (LAPACK) | Baseline, m < 5k |
+| **native_lapack** | PyBind11 + LAPACK | Single-node, m < 5k (instant) |
+| **native_reference** | ScaLAPACK MPI | Distributed, m > 10k |
+
+**Crossover**: ScaLAPACK beats Python at m ≈ 7k-10k with 8-16 processes
+
+**Key optimization**: Distributed kernel assembly (Milestone 1B)
+- Broadcast features (30MB) instead of scatter matrix (800MB)
+- Each rank computes its block-cyclic tiles in parallel
+- BLAS DGEMM optimization: 20-40× speedup over naive assembly
+
+### Score Backends (O(nm²) variance)
+
+| Backend | Method | Speedup (m=1000) |
+|---------|--------|------------------|
+| **Python** | NumPy + BLAS | Baseline |
+| **native_lapack** | PyBind11 + multi-threaded BLAS | 1.1-1.2× |
+| **GPU** | CuPy/CUDA | 3-4.6× |
+
+**Key insight**: Variance computation dominates scoring time for large n
+- Mean only: O(nm) - fast
+- With variance: O(nm²) - expensive but needed for exploration
+
+## Quick Start
+
+### Setup
 
 ```bash
+# CPU-only (default)
 bash scripts/bootstrap_env.sh
 source scripts/activate_env.sh
+
+# With GPU support (optional, on GPU node)
+bash scripts/bootstrap_env.sh --gpu
+source scripts/activate_env.sh --gpu
+
+# Verify
 python scripts/app/check_env.py
 ```
 
-To include Streamlit app dependencies:
+### Build Corpus and Embeddings
 
 ```bash
-bash scripts/bootstrap_env.sh --app
-```
-
-### GPU-enabled setup (optional)
-
-For GPU-accelerated scoring (10-100× faster for m > 5000):
-
-```bash
-# Must be run on a GPU node or with GPU access
-srun -p gpu --gres=gpu:1 -n1 -t 30:00 --pty bash
-cd ~/poetry
-bash scripts/bootstrap_env.sh --gpu
-source scripts/activate_env.sh --gpu
-python -c "import cupy; print(f'CuPy: {cupy.__version__}')"
-```
-
-This creates a mamba-based conda environment with CuPy pre-compiled for GPU nodes, avoiding CPU architecture mismatch issues between general and GPU nodes.
-
-**Note:** GPU setup uses CS-2050-mamba spack environment + conda, while CPU setup uses CS-2050 + venv. Both approaches work seamlessly across node types.
-
-### Manual activation
-
-Once bootstrapped, activate with:
-
-```bash
-# CPU environment
-source scripts/activate_env.sh
-
-# GPU environment (if created)
-source scripts/activate_env.sh --gpu
-```
-
-The activation script auto-detects which environment was created and activates the appropriate one.
-
-### Optional LLM dependencies
-
-For metadata imputation (works in either environment):
-
-```bash
-source scripts/activate_env.sh
-pip install -r requirements-llm.txt
-```
-
-## Canonical corpus build path
-
-The corpus foundation is now controlled by a manifest:
-
-```text
-configs/poetry_sources.json
-```
-
-To build the active corpus:
-
-```bash
+# Download and deduplicate poems
 python scripts/app/build_poetry_corpus.py
-```
 
-Useful variants:
+# Generate embeddings
+python scripts/app/embed_poems.py \
+  --input data/poems.parquet \
+  --output data/embeddings.npy
 
-```bash
-python scripts/app/build_poetry_corpus.py --sources public_domain_poetry
-python scripts/app/build_poetry_corpus.py --per-source-limit 500
-python scripts/app/build_poetry_corpus.py --min-chars 80
-```
-
-This writes:
-
-- `data/poems.parquet`: deduped canonical corpus
-- `data/source_audit.parquet`: per-source ingest/canonicalization counts
-- `data/duplicate_poems.parquet`: dropped duplicate rows only
-- `data/duplicate_groups.parquet`: kept and dropped rows grouped together for duplicate auditing
-
-## Embeddings and projections
-
-Build poem embeddings:
-
-```bash
-python scripts/app/embed_poems.py --input data/poems.parquet --output data/embeddings.npy
-```
-
-Project poems to 2D with UMAP and save the fitted reducer:
-
-```bash
+# Project to 2D for visualization
 python scripts/app/project_poems_2d.py \
   --input data/embeddings.npy \
-  --output data/proj2d.npy \
-  --reducer-output data/proj2d_reducer.pkl
+  --output data/proj2d.npy
 ```
 
-The projection path now uses:
+See [`docs/CORPUS_BUILDING.md`](docs/CORPUS_BUILDING.md) for data pipeline details.
 
-- `float32`
-- a PCA-style pre-reduction step before UMAP (default: 50 dimensions)
-- conservative CPU parallelism by default (`--n-jobs 1`)
-- optional non-deterministic execution for speed
-
-If you want a faster-but-riskier run on a roomier machine, increase jobs manually:
-
-```bash
-python scripts/app/project_poems_2d.py --n-jobs 2
-```
-
-If you want more reproducible output instead of speed:
-
-```bash
-python scripts/app/project_poems_2d.py --deterministic --seed 0
-```
-
-You can also tune the pre-reduction size explicitly:
-
-```bash
-python scripts/app/project_poems_2d.py --pre-reduce-dims 50
-```
-
-Build poet centroids in embedding space and then project them with the **same** reducer:
-
-```bash
-python scripts/app/build_poet_centroids.py --poems data/poems.parquet --embeddings data/embeddings.npy
-python scripts/app/project_poet_centroids_2d.py \
-  --input data/poet_centroids.npy \
-  --output data/poet_centroids_2d.npy \
-  --reducer data/proj2d_reducer.pkl
-```
-
-This shared-reducer path matters: poem points and poet centroids should live in the same 2D coordinate system if they are going to be overlaid on the same visualization.
-
-## Interacting with the project
-
-Phrase-to-poem search:
-
-```bash
-python scripts/app/query_by_phrase.py --text "melancholy bells over evening water" --topk 10
-python scripts/app/query_by_phrase.py --text "winter grief and birds" --poet dickinson --topk 5
-```
-
-Poem-to-poem similarity search:
-
-```bash
-python scripts/app/query_by_poem.py --title "The Raven" --topk 10 --exclude-self
-python scripts/app/query_by_poem.py --poem-id 12345 --topk 10 --exclude-self
-```
-
-Interactive CLI:
+### Interactive Session
 
 ```bash
 python scripts/app/interactive_cli.py
 ```
 
-**Scoring backend recommendation:**
-- **Python (default)**: Best for typical CLI usage (m < 1000)
-- **GPU**: 2-10× speedup for m > 5000, requires GPU node + CuPy
-- **Daemon**: Not recommended - high overhead for typical CLI use
+**Features**:
+- Rate poems with numeric scores
+- **Exploit** (`e`): Get recommendations (max mean, UCB, Thompson sampling)
+- **Explore** (`x`): Strategic queries (max variance, spatial diversity, expected improvement)
+- **Config** (`c`): Choose acquisition functions and backends
+- **Search** (`s`): Find specific poems/poets
+- Multi-user support with session persistence
 
-The CLI features:
-- 🎨 **Rich terminal UI** with colors, panels, and tables
-- 👥 **Multi-user support** - multiple users can maintain separate rating sessions
-- ⚙️ **Interactive config menu** (`c` command):
-  - **Exploitation strategies**: Max Mean, UCB (recommended), LCB, Thompson Sampling
-  - **Exploration strategies**: Max Variance (entropy), Spatial Diverse, Expected Improvement
-  - **Score backend**: Python (CPU) or GPU (CUDA)
-  - **Hyperparameter optimization**: Toggle on/off with iteration control
-  - Settings persist per user in session files
-- 📊 **Advanced acquisition functions**:
-  - **Exploit (e)**: Choose from Max Mean, UCB (recommended for balancing mean + uncertainty), LCB (conservative), Thompson (diverse)
-  - **Explore (x)**: Choose from Max Variance (info-optimal), Spatial Diverse (O(n²), spatially aware), Expected Improvement (balanced)
-- 🔍 **Search** by title, poet, or text content
-- ⏱️ **Performance metrics** for each GP computation
-- 💾 **Session persistence** - resume where you left off with saved config
-- 🔧 **Hyperparameter optimization** with analytic gradients (2-5× faster)
-
-**Acquisition function guide:**
-
-| Use Case | Recommendation |
-|----------|---------------|
-| **Safe recommendations** | UCB (β=2.0) - balances predicted quality + confidence |
-| **Diverse recommendations** | Thompson Sampling - samples from posterior |
-| **Fast exploration** | Max Variance - information-theoretically optimal |
-| **Spatially diverse exploration** | Spatial Diverse - considers correlation (slow O(n²)) |
-| **Balanced explore/exploit** | Expected Improvement - classic Bayesian optimization |
-
-Rich is included in `requirements-app.txt` and will be installed with:
-```bash
-bash scripts/bootstrap_env.sh --app
+**Performance** (m=1000, n=85k):
+```
+Fit:     0.03s  (native_lapack)
+Score:   0.60s  (GPU)
+Select:  0.001s (max_variance)
+Total:   0.63s per iteration
 ```
 
-Streamlit app:
+### Acquisition Functions
 
-```bash
-streamlit run app/streamlit_app.py
-```
+**Exploitation** (recommend likely favorites):
+- `max_mean`: argmax μ(x) - simple, fast
+- `ucb`: argmax μ(x) + β·σ(x) - **recommended** (balances quality + confidence)
+- `thompson`: Sample from posterior - Bayesian optimal
+
+**Exploration** (ask informative questions):
+- `max_variance`: argmax σ²(x) - information-optimal (O(n))
+- `expected_improvement`: Classic Bayesian optimization (O(n))
+- `spatial_variance`: Spatially diverse selection (O(n²), only for n < 10k)
+
+See [`docs/ACQUISITION_FUNCTIONS.md`](docs/ACQUISITION_FUNCTIONS.md) for detailed tradeoffs.
 
 ## Benchmarking
 
-### Fitting Benchmarks (GP training)
-
-**Quick test** (m=100-2000, 1-4 processes):
+### Fit Performance (GP training)
 
 ```bash
+# Quick test (m=100-2000)
 sbatch scripts/quick_bench_test.slurm
-python scripts/visualize_benchmarks.py results/quick_test_*.csv
-```
 
-**Large-scale overnight run** (m=2k-30k, 1-16 processes, ~12 hours):
-
-```bash
+# Large-scale sweep (m=2k-30k, overnight)
 sbatch scripts/large_scale_bench.slurm
-python scripts/visualize_benchmarks.py results/large_scale_fit_*.csv
+
+# Visualize results
+python scripts/visualize_benchmarks.py results/*.csv
 ```
 
-Tests comprehensive parameter sweep:
-- Problem sizes: 2k, 5k, 7k, 10k, 15k, 20k, 25k, 30k
-- Block sizes: 64, 128, 256
-- Process counts: 1, 4, 8, 16
-- **FIT-ONLY**: Scoring skipped (`--score-backend none`) for focused performance analysis
-
-**Block size comparison** (m=7k-20k, optimal block size):
+### Score Performance (Posterior prediction)
 
 ```bash
-sbatch scripts/blocksize_sweep.slurm
-python scripts/visualize_benchmarks.py results/blocksize_sweep_*.csv
-```
-
-### Scoring Benchmarks (Posterior prediction)
-
-**Comprehensive scoring comparison** (requires GPU node):
-
-```bash
+# GPU vs CPU comparison
 sbatch scripts/gpu_scoring_bench.slurm
-```
 
-Tests **all three backends** for each m value:
-- CPU (1 thread) - baseline
-- CPU (8 threads) - multi-threaded BLAS
-- GPU (CuPy/CUDA) - CUDA acceleration
-
-Problem sizes: m ∈ {100, 500, 1k, 2k, 5k, 10k, 15k, 20k} with n=25k candidates
-
-This single script provides complete CPU vs GPU comparison including threading effects.
-
-**Custom scoring benchmark:**
-
-```bash
+# Custom benchmark
 python scripts/bench_scoring.py \
-  --m-rated 100 500 1000 2000 5000 10000 \
+  --m-rated 100 500 1000 5000 \
   --n-candidates 25000 \
-  --cpu-threads 8 \
-  --output-csv results/scoring_custom.csv
+  --cpu-threads 8
 ```
 
-### Custom Fitting Benchmark
+See [`docs/BENCHMARKING_GUIDE.md`](docs/BENCHMARKING_GUIDE.md) for comprehensive benchmarking guide.
 
-**ScaLAPACK:**
+## HPC Principles Demonstrated
 
-```bash
-python scripts/bench_step.py --backend blocked --fit-backend native_reference \
-  --n-poems 10000 --m-rated 2000 \
-  --scalapack-launcher mpirun --scalapack-nprocs 8 --scalapack-block-size 64 \
-  --score-backend none  # Skip scoring for focused fit benchmarking
+### 1. Algorithmic Complexity Analysis
+- Identifying O(m³) and O(nm²) bottlenecks through profiling
+- Understanding when distributed methods pay off
+
+### 2. Backend Abstraction
+- Single API, multiple implementations (Python, LAPACK, ScaLAPACK, GPU)
+- Automatic selection based on problem size and hardware
+
+### 3. Distributed Memory (ScaLAPACK)
+- Block-cyclic matrix layout
+- Process grid topology
+- Communication vs computation tradeoffs
+- Distributed kernel assembly (Milestone 1B)
+
+### 4. GPU Acceleration
+- Offloading O(nm²) triangular solves to GPU
+- Memory transfer overhead vs compute speedup
+- When GPU helps: m > 500 (3-4.6× faster)
+
+### 5. Lazy Evaluation
+- Optional variance computation (skip when not needed)
+- Acquisition function determines workload
+
+### 6. Performance Engineering
+- BLAS optimization (DGEMM for kernel assembly)
+- Blocking for cache efficiency
+- Multi-threaded BLAS for CPU parallelism
+
+## Project Structure
+
 ```
-
-**Python baseline:**
-
-```bash
-python scripts/bench_step.py --backend blocked --fit-backend python \
-  --n-poems 10000 --m-rated 2000 \
-  --score-backend none
-```
-
-**Performance expectations:**
-- **Fitting**: O(m³) - ScaLAPACK wins for m > 7k-10k
-- **Scoring (mean only)**: O(n × m × d) + O(n × m) - Fast, GPU helps for large m
-- **Scoring (with variance)**: O(n × m²) - Expensive! GPU 5-10× faster for m > 5k
-
-See `scripts/README.md` for more options and `docs/BENCHMARKING_GUIDE.md` for details.
-
-## Data quality improvements
-
-**Canonical poet prioritization** in visualizations:
-- Curated list of ~60 major poets (Dickinson, Yeats, Auden, Larkin, Heaney, etc.)
-- Hybrid selection: canonical poets shown with priority, then high-count poets
-- Visual distinction: canonical poets have darker color, larger markers, priority labeling
-
-**Missing metadata imputation** using multiple strategies:
-
-```bash
-# Step 1: First-line matching (recommended, always safe)
-python scripts/app/impute_missing_metadata.py \
-  --poems data/poems.parquet \
-  --output data/poems_imputed.parquet
-
-# Step 2: Generate LLM batch requests for remaining unknowns
-python scripts/app/impute_missing_metadata.py \
-  --poems data/poems_imputed.parquet \
-  --generate-llm-batch data/llm_batch_requests.jsonl
-
-# Step 3: Submit to Claude Batch API (requires anthropic SDK and API key)
-pip install -r requirements-llm.txt
-export ANTHROPIC_API_KEY='your-key'
-python scripts/app/submit_llm_batch.py --input data/llm_batch_requests.jsonl
-
-# Step 4: Check status (optional)
-python scripts/app/check_llm_batch.py
-
-# Step 5: Download results when complete
-python scripts/app/download_llm_batch.py --output data/llm_batch_results.jsonl
-
-# Step 6: Apply results back to dataframe
-python scripts/app/apply_llm_imputation_results.py \
-  --poems data/poems_imputed.parquet \
-  --results data/llm_batch_results.jsonl \
-  --output data/poems_imputed.parquet
-```
-
-Imputation strategies:
-1. **First-line matching**: Propagate known poets to duplicate poems (free, robust)
-2. **LLM batch API**: Claude identifies well-known poems (~$0.003-0.005 per 1000 poems)
-
-**Key safeguards**:
-- ✅ Never re-imputes already-imputed rows
-- ✅ Only generates LLM requests for rows still needing imputation
-- ✅ Boolean flags (`poet_imputed`, `title_imputed`) track imputation status
-- ✅ Confidence filtering to avoid low-quality imputations
-
-See `docs/POET_SELECTION_AND_IMPUTATION.md` for complete workflow and details.
-
-## Key docs
-
-- `docs/METHOD_NARRATIVE.md`: mathematical motivation, modeling story, and HPC framing
-- `docs/NATIVE_HPC_ROADMAP.md`: HPC optimization roadmap and milestones
-- `docs/MILESTONE_1B_DESIGN.md`: Distributed kernel assembly design (Milestone 1B)
-- `docs/SCALAPACK_BACKEND.md`: ScaLAPACK implementation details
-- `docs/BENCHMARKING_GUIDE.md`: Benchmarking workflow and scripts
-- `docs/CORPUS_BUILDING.md`: source manifests, normalization, dedupe, and audit outputs
-- `docs/POET_SELECTION_AND_IMPUTATION.md`: Canonical poet prioritization and metadata imputation
-- `scripts/README.md`: Script organization and usage guide
-
-## Repository structure
-
-```text
-configs/
-  poetry_sources.json          # Corpus source manifest
-
-docs/
-  NATIVE_HPC_ROADMAP.md       # HPC optimization roadmap
-  MILESTONE_1B_DESIGN.md      # Distributed assembly design
-  SCALAPACK_BACKEND.md        # ScaLAPACK implementation
-  BENCHMARKING_GUIDE.md       # Benchmarking workflow
-  METHOD_NARRATIVE.md         # Mathematical motivation
-  CORPUS_BUILDING.md          # Corpus building guide
+src/poetry_gp/
+  gp_exact.py              # Exact GP: kernel, Cholesky, solve
+  kernel.py                # RBF kernel with BLAS optimization
+  backends/
+    blocked.py             # Main API: run_blocked_step()
+    backend_selection.py   # Automatic backend choice
+    native_lapack.py       # PyBind11 LAPACK (single-node)
+    scalapack_fit.py       # ScaLAPACK MPI (distributed)
+    gpu_scoring.py         # CuPy CUDA (GPU)
 
 native/
-  scalapack_gp_fit.cpp        # C++ ScaLAPACK GP solver
-  scalapack_gp_fit_entry.cpp  # Entry point with routing
-  CMakeLists.txt              # Build configuration
-
-src/poetry_gp/
-  gp_exact.py                 # Exact GP with optional variance computation
-  kernel.py                   # RBF kernel
-  backends/
-    blocked.py                # Vectorized blocked backend with acquisition functions
-    scalapack_fit.py          # ScaLAPACK native backend
-    gpu_scoring.py            # GPU scoring with CuPy (optional variance)
-    scoring.py                # Daemon scoring utilities
+  scalapack_gp_fit.cpp     # C++ ScaLAPACK implementation
+  pybind11_lapack.cpp      # PyBind11 LAPACK bindings
 
 scripts/
-  bench_step.py               # Core fit benchmark script
-  bench_scoring.py            # GPU vs CPU scoring benchmark (fixed threading)
-  visualize_benchmarks.py     # Visualization tool with side-by-side plots
-  quick_bench_test.slurm      # Quick benchmark (m=100-2000)
-  large_scale_bench.slurm     # Overnight fit benchmark (m=2k-30k)
-  blocksize_sweep.slurm       # Block size optimization sweep
-  gpu_scoring_bench.slurm     # GPU vs CPU scoring comparison (all backends)
-  bootstrap_env.sh            # Unified environment setup (CPU or GPU)
-  activate_env.sh             # Auto-detecting environment activation
-  app/
-    interactive_cli.py        # Interactive CLI with config menu
-    build_poetry_corpus.py    # Manifest-driven corpus builder
-    query_by_phrase.py        # Phrase-to-poem search
-    query_by_poem.py          # Poem-to-poem similarity
-    check_env.py              # Environment verification
-    # ... (other app scripts)
-  debug/                      # Debug and test scripts
-  archive/                    # Old/superseded scripts
+  app/interactive_cli.py   # Interactive recommendation
+  bench_step.py            # Fit benchmarks
+  bench_scoring.py         # Score benchmarks
+  *.slurm                  # Cluster job scripts
+
+docs/
+  METHOD_NARRATIVE.md              # Mathematical foundation
+  CURRENT_ROADMAP.md               # Development roadmap
+  BACKEND_SELECTION.md             # Backend guide
+  ACQUISITION_FUNCTIONS.md         # Exploration strategies
+  BENCHMARKING_GUIDE.md            # Performance analysis
+  CORPUS_BUILDING.md               # Data pipeline
+  NATIVE_HPC_ROADMAP.md            # HPC optimizations
+  MILESTONE_1B_DESIGN.md           # Distributed assembly
+  POET_SELECTION_AND_IMPUTATION.md # Data quality
 ```
 
-## Current state
+## Key Documentation
 
-**Implemented:**
+**Getting Started**:
+- [`docs/BACKEND_SELECTION.md`](docs/BACKEND_SELECTION.md) - When to use which backend
+- [`docs/ACQUISITION_FUNCTIONS.md`](docs/ACQUISITION_FUNCTIONS.md) - Exploration strategies
 
-**Core GP System:**
-- Exact GP fitting via Cholesky factorization with **analytic gradients** (2-5× faster optimization)
-- Blocked vectorized Python backend
-- **Optional variance computation** - skip expensive O(n × m²) variance calc for exploit-only workflows
+**Mathematical Foundation**:
+- [`docs/METHOD_NARRATIVE.md`](docs/METHOD_NARRATIVE.md) - From ridge regression to GP
 
-**Distributed Computing:**
-- **ScaLAPACK native backend with distributed linear algebra**
-- **Milestone 1B: Distributed kernel assembly from features**
-  - Broadcasts features (30MB) instead of matrix (800MB)
-  - Parallel RBF kernel assembly across ranks
-  - BLAS DGEMM optimization for 20-40× speedup
-  - Crossover point: m ≈ 7k-10k (ScaLAPACK beats Python)
+**HPC Implementation**:
+- [`docs/NATIVE_HPC_ROADMAP.md`](docs/NATIVE_HPC_ROADMAP.md) - HPC optimization roadmap
+- [`docs/MILESTONE_1B_DESIGN.md`](docs/MILESTONE_1B_DESIGN.md) - Distributed kernel assembly
+- [`docs/SCALAPACK_BACKEND.md`](docs/SCALAPACK_BACKEND.md) - ScaLAPACK details
 
-**GPU Acceleration:**
-- **GPU-accelerated scoring with CuPy (optional)**
-  - CUDA-based posterior prediction for massive speedup with large m
-  - RBF kernel, GEMV, and triangular solve on GPU
-  - 5-10× faster than multi-threaded CPU for m > 5000
-  - **Optional variance** - can skip O(n × m²) variance for exploit-only
-  - Automatic CPU↔GPU data transfer and memory management
-  - Graceful fallback when GPU/CuPy unavailable
+**Data and Benchmarking**:
+- [`docs/CORPUS_BUILDING.md`](docs/CORPUS_BUILDING.md) - Data pipeline
+- [`docs/BENCHMARKING_GUIDE.md`](docs/BENCHMARKING_GUIDE.md) - Performance analysis
 
-**Advanced Acquisition Functions:**
-- **Exploitation strategies** (for 'exploit' command):
-  - **Max Mean**: Simple argmax μ(x) - fast but risky
-  - **UCB (Upper Confidence Bound)**: argmax μ(x) + β·σ(x) - **RECOMMENDED** industry standard
-  - **LCB (Lower Confidence Bound)**: argmax μ(x) - β·σ(x) - conservative
-  - **Thompson Sampling**: Sample from posterior - Bayesian optimal, diverse
-- **Exploration strategies** (for 'explore' command):
-  - **Max Variance**: argmax σ²(x) - information-theoretically optimal (minimize entropy)
-  - **Spatial Diverse**: Minimize mean variance - spatially aware (expensive O(n²))
-  - **Expected Improvement**: Classic Bayesian optimization - balanced
+**Development**:
+- [`docs/CURRENT_ROADMAP.md`](docs/CURRENT_ROADMAP.md) - Current status and next steps
 
-**User Experience:**
-- **Interactive config menu** in CLI (`c` command)
-  - Select exploitation/exploration strategies
-  - Tune UCB β parameter (1.0-3.0)
-  - Choose score backend (Python/GPU)
-  - Toggle hyperparameter optimization
-  - Settings persist in session files
-- 🎨 Rich terminal UI with colors, panels, and tables
-- 👥 Multi-user support with separate rating sessions
-- 🔍 Search by title, poet, or text content
-- ⏱️ Performance metrics for each GP computation
-- 💾 Session persistence with configuration
+## Current Status
 
-**Data Pipeline:**
-- Manifest-driven multi-source corpus building
-- Text normalization and duplicate auditing
-- Embedding and 2D projection pipeline
-- Phrase search and poem-to-poem search
-- Canonical poet prioritization and metadata imputation
+**Completed**:
+- ✅ Exact GP with automatic backend selection
+- ✅ PyBind11 LAPACK integration (zero subprocess overhead)
+- ✅ GPU scoring with CuPy (3-4.6× speedup)
+- ✅ ScaLAPACK distributed fitting (Milestone 1B: distributed kernel assembly)
+- ✅ Hyperparameter optimization with analytic gradients
+- ✅ Interactive CLI with rich UI and multi-user support
+- ✅ Advanced acquisition functions (UCB, Thompson, spatial diversity)
+- ✅ Comprehensive benchmarking infrastructure
 
-**Benchmarking & HPC:**
-- Comprehensive Slurm scripts for cluster use:
-  - Large-scale fit benchmarks (m up to 30k)
-  - GPU vs CPU scoring comparisons
-  - Block size and process count sweeps
-- Visualization tools with side-by-side comparisons
-- Detailed performance profiling and timing breakdowns
+**Next Priorities** (see [`docs/CURRENT_ROADMAP.md`](docs/CURRENT_ROADMAP.md)):
+1. Warm-start hyperparameter optimization (5× faster in interactive sessions)
+2. Lazy variance computation (85× reduction for exploration)
+3. Analytic gradients for HP optimization (30-50% fewer iterations)
 
-**In progress / Next steps:**
+## Pedagogical Value
 
-- Analyze overnight large-scale benchmarks (m=2k-30k)
-- GPU backend for kernel assembly (fitting phase) - currently CPU-only
-- Enhanced Streamlit UI with acquisition function selection
-- Multi-GPU support for extremely large-scale problems
+This project demonstrates:
+- **Computational complexity**: O(m³) and O(nm²) bottlenecks in practice
+- **Distributed computing**: ScaLAPACK, process grids, block-cyclic layout
+- **GPU acceleration**: When and why GPU helps (memory-bound vs compute-bound)
+- **Algorithmic tradeoffs**: Exact vs approximate, exploit vs explore
+- **Performance engineering**: Profiling, BLAS optimization, backend selection
+- **Active learning**: Bayesian optimization in an authentic application
+
+---
+
+**A CS 2050 project demonstrating HPC principles through interactive poetry recommendation.**
