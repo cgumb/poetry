@@ -41,6 +41,12 @@ extern "C" {
     void dtrsm_(const char* side, const char* uplo, const char* transa, const char* diag,
                 const int* m, const int* n, const double* alpha,
                 const double* a, const int* lda, double* b, const int* ldb);
+
+    // Matrix-vector multiply: y = alpha * A * x + beta * y
+    void dgemv_(const char* trans, const int* m, const int* n,
+                const double* alpha, const double* a, const int* lda,
+                const double* x, const int* incx,
+                const double* beta, double* y, const int* incy);
 }
 
 
@@ -81,16 +87,54 @@ py::array_t<double> rbf_kernel(
     auto K_py = py::array_t<double>(std::vector<ssize_t>{n1, n2});
     double* K = K_py.mutable_data();
 
-    // Compute pairwise squared distances
     const double inv_2l2 = -0.5 / (length_scale * length_scale);
 
+    // Efficient distance computation using BLAS:
+    // dist_sq[i,j] = ||x1[i]||^2 + ||x2[j]||^2 - 2 * <x1[i], x2[j]>
+
+    // 1. Compute squared norms
+    std::vector<double> norm1_sq(n1);
+    std::vector<double> norm2_sq(n2);
+
+    for (int i = 0; i < n1; ++i) {
+        double sum = 0.0;
+        for (int k = 0; k < d; ++k) {
+            double val = x1[i * d + k];
+            sum += val * val;
+        }
+        norm1_sq[i] = sum;
+    }
+
+    for (int j = 0; j < n2; ++j) {
+        double sum = 0.0;
+        for (int k = 0; k < d; ++k) {
+            double val = x2[j * d + k];
+            sum += val * val;
+        }
+        norm2_sq[j] = sum;
+    }
+
+    // 2. Compute cross term: K = x1 @ x2^T using BLAS dgemm
+    // x1 is (n1 × d) row-major, x2 is (n2 × d) row-major
+    // We want: K[i,j] = sum_k x1[i,k] * x2[j,k] = x1[i,:] @ x2[j,:]^T
+    // Since both are row-major, treat as: K = x1 @ x2^T
+    // In BLAS (column-major): this is x1^T (d × n1) @ x2 (d × n2) with trans
+    const char transa = 'T';  // Transpose x1^T (column-major view)
+    const char transb = 'N';  // Don't transpose x2 (column-major view)
+    const int m_dgemm = n1;
+    const int n_dgemm = n2;
+    const int k_dgemm = d;
+    const double alpha_dgemm = -2.0;  // Coefficient for cross term
+    const double beta_dgemm = 0.0;
+
+    dgemm_(&transa, &transb, &m_dgemm, &n_dgemm, &k_dgemm,
+           &alpha_dgemm, x1, &k_dgemm, x2, &k_dgemm,
+           &beta_dgemm, K, &m_dgemm);
+
+    // 3. Add squared norms and apply exp: K[i,j] = var * exp(inv_2l2 * dist_sq)
     for (int i = 0; i < n1; ++i) {
         for (int j = 0; j < n2; ++j) {
-            double dist_sq = 0.0;
-            for (int k = 0; k < d; ++k) {
-                double diff = x1[i * d + k] - x2[j * d + k];
-                dist_sq += diff * diff;
-            }
+            double dist_sq = norm1_sq[i] + norm2_sq[j] + K[i * n2 + j];  // + because alpha=-2
             K[i * n2 + j] = variance * std::exp(inv_2l2 * dist_sq);
         }
     }
@@ -298,13 +342,19 @@ py::dict predict_gp_lapack(
     const double* K_qr = static_cast<const double*>(K_qr_buf.ptr);
     const double* alpha = static_cast<const double*>(alpha_buf.ptr);
 
-    // Compute mean: K_qr @ alpha
+    // Compute mean: K_qr @ alpha using BLAS dgemv
+    // K_qr is (n × m) row-major, equivalent to K_qr^T column-major (m × n)
+    // Use trans='T' to compute: mean = (K_qr^T)^T @ alpha = K_qr @ alpha
     std::vector<double> mean(n, 0.0);
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < m; ++j) {
-            mean[i] += K_qr[i * m + j] * alpha[j];
-        }
-    }
+    const char trans = 'T';
+    const int m_int = m;
+    const int n_int = n;
+    const double alpha_val = 1.0;
+    const double beta_val = 0.0;
+    const int inc = 1;
+
+    dgemv_(&trans, &m_int, &n_int, &alpha_val, K_qr, &m_int,
+           alpha, &inc, &beta_val, mean.data(), &inc);
 
     // Copy mean to Python-owned array
     // CRITICAL: Must pass shape as std::vector, not raw int (stride=0 bug!)
