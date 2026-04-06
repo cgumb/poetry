@@ -199,14 +199,6 @@ py::dict fit_gp_lapack(
         logdet += 2.0 * std::log(diag_val);
     }
 
-    // Debug: print alpha before solve
-    std::fprintf(stderr, "\nDEBUG fit_gp_lapack: m=%d\n", m);
-    std::fprintf(stderr, "alpha before dpotrs: [");
-    for (int i = 0; i < m; ++i) {
-        std::fprintf(stderr, "%.6f%s", alpha[i], i < m-1 ? ", " : "");
-    }
-    std::fprintf(stderr, "]\n");
-
     // Solve for alpha: K_rr * alpha = y using lower Cholesky
     int nrhs = 1;
     int info_potrs = 0;
@@ -218,14 +210,6 @@ py::dict fit_gp_lapack(
         );
     }
 
-    // Debug: print alpha after solve
-    std::fprintf(stderr, "alpha after dpotrs:  [");
-    for (int i = 0; i < m; ++i) {
-        std::fprintf(stderr, "%.6f%s", alpha[i], i < m-1 ? ", " : "");
-    }
-    std::fprintf(stderr, "]\n");
-    std::fprintf(stderr, "info_potrs=%d\n\n", info_potrs);
-
     // Build result dictionary with Python-owned arrays
     py::dict result;
 
@@ -235,17 +219,6 @@ py::dict fit_gp_lapack(
     auto alpha_py = py::array_t<double>(std::vector<ssize_t>{m});
     double* alpha_out = alpha_py.mutable_data();
     std::memcpy(alpha_out, alpha.data(), m * sizeof(double));
-
-    // Debug: verify copy and strides
-    auto alpha_info = alpha_py.request();
-    std::fprintf(stderr, "alpha_py shape=[%ld], stride=[%ld bytes]\n",
-                 alpha_info.shape[0], alpha_info.strides[0]);
-    std::fprintf(stderr, "alpha copied to Python: [");
-    for (int i = 0; i < m; ++i) {
-        std::fprintf(stderr, "%.6f%s", alpha_out[i], i < m-1 ? ", " : "");
-    }
-    std::fprintf(stderr, "]\n");
-
     result["alpha"] = alpha_py;
 
     result["logdet"] = logdet;
