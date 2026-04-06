@@ -60,7 +60,7 @@ def test_daemon_vs_python():
     print("\nScoring with daemon (parallel, 4 processes)...")
     try:
         from poetry_gp.backends.scalapack_daemon_client import ScaLAPACKDaemonClient
-        daemon = ScaLAPACKDaemonClient(nprocs=4, launcher="mpirun", daemon_exe=daemon_exe)
+        daemon = ScaLAPACKDaemonClient(nprocs=4, launcher="srun", daemon_exe=daemon_exe)
         daemon.start()
     except Exception as e:
         print(f"✗ Failed to start daemon: {e}")
@@ -170,7 +170,7 @@ def test_scaling():
         # Daemon
         try:
             from poetry_gp.backends.scalapack_daemon_client import ScaLAPACKDaemonClient
-            daemon = ScaLAPACKDaemonClient(nprocs=4, launcher="mpirun", daemon_exe=daemon_exe)
+            daemon = ScaLAPACKDaemonClient(nprocs=4, launcher="srun", daemon_exe=daemon_exe)
             daemon.start()
         except Exception as e:
             print(f"{m:<6} {d:<6} {n_query:<10} {time_py:<12.3f} {'FAILED':<12} {'N/A':<10}")

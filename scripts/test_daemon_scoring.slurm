@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -p general
 #SBATCH -N1
-#SBATCH -n1
+#SBATCH -n4
 #SBATCH -t 00:15:00
 #SBATCH -J test-daemon-scoring
 #SBATCH -o results/test-daemon-scoring-%j.out
