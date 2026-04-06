@@ -302,7 +302,7 @@ int main(int argc, char** argv) {
       result.message = "ScaLAPACK backend requested, but the executable was not built with ScaLAPACK support.";
 #endif
     } else {
-      result = run_mpi_reference(meta.n, rank, size, full_matrix, rhs, MPI_COMM_WORLD);
+      result = run_mpi_reference(meta.n, rank, size, full_matrix, rhs, args.return_alpha, args.return_chol, MPI_COMM_WORLD);
     }
     result.requested_backend = args.backend;
 

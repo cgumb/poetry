@@ -9,12 +9,21 @@ ENABLE_SCALAPACK ?= ON
 ENABLE_PYBIND11 ?= ON
 
 # Build native C++ executables and PyBind11 module
+# NOTE: Activate environment first: source scripts/activate_env.sh
 native-build:
 	@echo "Building native C++ code..."
 	@echo "  Build directory: $(BUILD_DIR)"
 	@echo "  ScaLAPACK: $(ENABLE_SCALAPACK)"
 	@echo "  PyBind11: $(ENABLE_PYBIND11)"
 	@echo ""
+	@# Check if Python is available (needed for PyBind11)
+	@if [ "$(ENABLE_PYBIND11)" = "ON" ]; then \
+		if ! python -c "import sys" 2>/dev/null; then \
+			echo "ERROR: Python not found. Activate environment first:"; \
+			echo "  source scripts/activate_env.sh"; \
+			exit 1; \
+		fi; \
+	fi
 	mkdir -p $(BUILD_DIR)
 	cd $(BUILD_DIR) && \
 	cmake .. \
