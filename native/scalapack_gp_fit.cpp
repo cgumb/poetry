@@ -316,7 +316,7 @@ int factorize_lower_mpi_row_partitioned(std::vector<double>& local_rows, std::si
   return info;
 }
 
-NativeResult run_mpi_reference(std::size_t n, int rank, int size, const std::vector<double>& full_matrix_root, const std::vector<double>& rhs_root, MPI_Comm comm) {
+NativeResult run_mpi_reference(std::size_t n, int rank, int size, const std::vector<double>& full_matrix_root, const std::vector<double>& rhs_root, bool return_alpha, bool return_chol, MPI_Comm comm) {
   NativeResult result;
   result.implemented = true;
   result.backend = "mpi_row_partitioned_reference";
@@ -343,6 +343,7 @@ NativeResult run_mpi_reference(std::size_t n, int rank, int size, const std::vec
   MPI_Barrier(comm);
   const auto factor_end = std::chrono::steady_clock::now();
 
+  // Always gather Cholesky factor to rank 0 (needed for solving)
   std::vector<double> chol;
   if (rank == 0) {
     chol.assign(n * n, 0.0);
@@ -353,6 +354,7 @@ NativeResult run_mpi_reference(std::size_t n, int rank, int size, const std::vec
   const auto gather_end = std::chrono::steady_clock::now();
 
   if (rank == 0) {
+    // Zero out upper triangle
     for (std::size_t i = 0; i < n; ++i) {
       for (std::size_t j = i + 1; j < n; ++j) {
         chol[i * n + j] = 0.0;
@@ -361,13 +363,26 @@ NativeResult run_mpi_reference(std::size_t n, int rank, int size, const std::vec
 
     const auto solve_start = std::chrono::steady_clock::now();
     if (result.info_potrf == 0) {
-      result.alpha = solve_from_cholesky_lower(chol, rhs_root, n);
+      // Always solve for alpha (needed for GP predictions)
+      std::vector<double> alpha = solve_from_cholesky_lower(chol, rhs_root, n);
       result.logdet = logdet_from_cholesky_lower(chol, n);
       result.info_potrs = 0;
+
+      // Only return alpha if requested
+      if (return_alpha) {
+        result.alpha = std::move(alpha);
+        result.has_alpha = true;
+      }
     }
     const auto solve_end = std::chrono::steady_clock::now();
     const auto total_end = std::chrono::steady_clock::now();
-    result.chol = std::move(chol);
+
+    // Only return Cholesky factor if requested
+    if (return_chol) {
+      result.chol = std::move(chol);
+      result.has_chol = true;
+    }
+
     result.factor_seconds = std::chrono::duration<double>(factor_end - factor_start).count();
     result.gather_seconds = std::chrono::duration<double>(gather_end - gather_start).count();
     result.solve_seconds = std::chrono::duration<double>(solve_end - solve_start).count();
@@ -1262,7 +1277,7 @@ int main(int argc, char** argv) {
       result.message = "ScaLAPACK backend requested, but the executable was not built with ScaLAPACK support.";
 #endif
     } else {
-      result = run_mpi_reference(n, rank, size, full_matrix, rhs, MPI_COMM_WORLD);
+      result = run_mpi_reference(n, rank, size, full_matrix, rhs, args.return_alpha, args.return_chol, MPI_COMM_WORLD);
     }
     result.requested_backend = args.backend;
 
