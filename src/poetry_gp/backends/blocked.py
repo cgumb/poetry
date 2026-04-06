@@ -13,6 +13,7 @@ from .scalapack_fit import fit_exact_gp_scalapack_from_rated
 from .native_lapack import fit_exact_gp_native, predict_native, is_native_available
 from .scoring import score_all_with_fallback, try_create_daemon_client
 from .gpu_scoring import score_all_gpu, is_gpu_available
+from .backend_selection import select_fit_backend, select_score_backend
 
 
 @dataclass
@@ -163,8 +164,8 @@ def run_blocked_step(
     block_size: int = 2048,
     optimize_hyperparameters: bool = False,
     optimizer_maxiter: int = 50,
-    fit_backend: str = "python",
-    score_backend: str = "python",  # "python", "native_lapack", "daemon", "auto", "gpu", "none"
+    fit_backend: str = "auto",  # "auto", "python", "native_lapack", "native_reference"
+    score_backend: str = "auto",  # "auto", "python", "native_lapack", "gpu", "daemon", "none"
     exploitation_strategy: str = "max_mean",  # "max_mean", "ucb", "lcb", "thompson"
     exploration_strategy: str = "max_variance",  # "max_variance", "spatial_variance", "expected_improvement"
     ucb_beta: float = 2.0,  # Confidence parameter for UCB/LCB strategies
@@ -195,6 +196,16 @@ def run_blocked_step(
     excluded_mask[rated_indices] = True
 
     x_rated = embeddings[rated_indices]
+
+    # Auto-select backends if requested
+    m = len(rated_indices)
+    n = len(embeddings)
+
+    if fit_backend == "auto":
+        fit_backend = select_fit_backend(m, manual_override=None)
+
+    if score_backend == "auto":
+        score_backend = select_score_backend(n, m, manual_override=None)
 
     # Optimize: Skip variance/chol gathering if score_backend="none"
     # (no scoring = no need for variance or cholesky factor)
