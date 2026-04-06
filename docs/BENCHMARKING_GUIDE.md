@@ -1,269 +1,455 @@
-# Benchmarking Guide
+# Measuring GP Performance
 
-This guide explains how to run performance benchmarks comparing Python vs ScaLAPACK GP fitting and visualize the results.
+## Why Benchmark?
 
-## Quick Start
+Performance claims like "ScaLAPACK is faster for large problems" are meaningless without measurement. Benchmarking lets you:
 
-### On the Cluster
+1. **Find crossover points**: At what m does distributed beat single-node?
+2. **Understand overhead**: Why is parallelization slower for small problems?
+3. **Measure scaling**: Does 16 processes give 16× speedup?
+4. **Validate decisions**: Is automatic backend selection choosing correctly?
+
+**The goal**: Understand performance empirically, not theoretically.
+
+---
+
+## What to Measure
+
+### Fit Performance (O(m³) Cholesky)
+
+**Key questions**:
+- How does time scale with m? (Should see O(m³) on log-log plot)
+- When does overhead dominate? (Small m: subprocess spawn, communication)
+- When does computation dominate? (Large m: actual FLOP count)
+- When does distributed win? (Crossover point depends on process count)
+
+**What to vary**:
+- Problem size (m): 100, 500, 1k, 5k, 10k, 20k
+- Backend: python, native_lapack, native_reference
+- Process count (for ScaLAPACK): 1, 4, 8, 16
+- Block size (for ScaLAPACK): 64, 128, 256
+
+### Score Performance (O(nm²) variance)
+
+**Key questions**:
+- When does GPU overhead pay off? (Transfer vs compute)
+- How does scoring scale with m and n?
+- Is multi-threaded BLAS helping?
+
+**What to vary**:
+- Problem size (m): 100, 500, 1k, 5k, 10k
+- Candidate count (n): 10k, 25k, 85k
+- Backend: python, native_lapack, gpu
+- Thread count: 1, 8 (for CPU backends)
+
+---
+
+## Running Benchmarks
+
+### Quick Test (5 minutes)
+
+Test on a few problem sizes to verify setup:
 
 ```bash
-# 1. Navigate to the repository
 cd ~/poetry
 
-# 2. Submit the benchmark job
-sbatch scripts/bench_performance_sweep.slurm
+# Fit benchmark
+sbatch scripts/quick_bench_test.slurm
 
-# 3. Monitor the job
-squeue -u $USER
-tail -f results/perf-sweep-JOBID.out
+# Check output
+tail -f results/quick_test_*.out
 
-# 4. Download results when complete
-scp cluster:~/poetry/results/perf_sweep_*.csv ./
+# When complete, visualize
+python scripts/visualize_benchmarks.py results/quick_test_*.csv
 ```
 
-### On Your Local Machine
+This tests m = 100, 500, 1000, 2000 with 1-4 processes.
+
+### Comprehensive Sweep (overnight)
+
+Full parameter sweep for publication-quality results:
 
 ```bash
-# 1. Install visualization dependencies (if not already installed)
-pip install matplotlib pandas
+# Large-scale fit benchmark (m up to 30k)
+sbatch scripts/large_scale_bench.slurm
 
-# 2. Generate plots
-python scripts/visualize_benchmarks.py results/perf_sweep_TIMESTAMP.csv
+# GPU vs CPU scoring comparison
+sbatch scripts/gpu_scoring_bench.slurm
 
-# 3. View plots
-open results/plots/  # macOS
-xdg-open results/plots/  # Linux
+# Visualize when complete
+python scripts/visualize_benchmarks.py results/large_scale_*.csv results/gpu_scoring_*.csv
 ```
 
----
+### Custom Benchmark
 
-## Detailed Instructions
+For specific questions:
 
-### 1. Configuring the Benchmark
-
-The Slurm script `bench_performance_sweep.slurm` can be customized via environment variables:
-
-```bash
-# Example: Custom configuration
-sbatch \
-  --export=ALL,M_RATED_LIST="1000 5000 10000 20000",NPROCS_LIST="1 4 8 16 32" \
-  scripts/bench_performance_sweep.slurm
-```
-
-**Key Parameters:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `M_RATED_LIST` | `100 500 1000 2000 5000 10000` | Problem sizes to test |
-| `NPROCS_LIST` | `1 2 4 8 16 24 32 48` | Process counts to test |
-| `BLOCK_SIZE_LIST` | `64 128 256 512` | ScaLAPACK block sizes |
-| `N_POEMS` | `80000` | Total corpus size |
-| `DIM` | `384` | Embedding dimension |
-| `NATIVE_BACKEND` | `scalapack` | Backend (`scalapack` or `mpi`) |
-
-### 2. Understanding the Output
-
-#### Console Output
-
-The Slurm job produces:
-- `results/perf-sweep-JOBID.out`: Standard output with progress
-- `results/perf-sweep-JOBID.err`: Error messages (if any)
-
-#### CSV Output
-
-The benchmark produces a CSV file: `results/perf_sweep_TIMESTAMP.csv`
-
-**Columns:**
-- `timestamp`: When the benchmark ran
-- `m_rated`: Problem size (number of rated points)
-- `backend`: Backend used (`blocked`)
-- `fit_backend`: Fit implementation (`python` or `native_reference`)
-- `native_backend`: ScaLAPACK backend (`scalapack` or `mpi`)
-- `nprocs`: Number of MPI processes
-- `scalapack_block_size`: ScaLAPACK block size
-- `fit_seconds`: Time for GP fitting (Cholesky factorization)
-- `score_seconds`: Time for scoring all candidates
-- `total_seconds`: Total runtime
-- `log_marginal_likelihood`: Model evidence
-
-### 3. Visualization
-
-The `visualize_benchmarks.py` script creates four plots:
-
-#### 1. Performance vs Problem Size
-- Compares Python vs ScaLAPACK across different `m_rated`
-- Shows both fit time and total time
-- Log-log scale to see scaling trends
-
-#### 2. Scaling Analysis
-- Shows speedup vs number of processes
-- Compares actual speedup to ideal linear speedup
-- Separate plot for each problem size
-
-#### 3. Block Size Impact
-- Shows how ScaLAPACK block size affects performance
-- Helps identify optimal block size for your hardware
-- Separate plot for each (m_rated, nprocs) combination
-
-#### 4. Time Breakdown
-- Stacked bar chart showing fit/score/select time
-- Helps identify bottlenecks
-- Separate charts for Python and ScaLAPACK
-
-**Customization:**
-
-```bash
-# Save as PDF instead of PNG
-python scripts/visualize_benchmarks.py results/perf_sweep.csv --format pdf
-
-# Save as both PNG and PDF
-python scripts/visualize_benchmarks.py results/perf_sweep.csv --format both
-
-# Higher resolution
-python scripts/visualize_benchmarks.py results/perf_sweep.csv --dpi 300
-
-# Custom output directory
-python scripts/visualize_benchmarks.py results/perf_sweep.csv --output-dir my_plots/
-```
-
----
-
-## Running Individual Benchmarks
-
-For quick tests or debugging, you can run individual benchmarks:
-
-### Python Baseline
-
-```bash
+```python
 python scripts/bench_step.py \
-  --backend blocked \
-  --fit-backend python \
-  --n-poems 5000 \
-  --m-rated 100 \
-  --output-csv results/test.csv
-```
-
-### ScaLAPACK with Different Configurations
-
-```bash
-# 4 processes, block size 128
-python scripts/bench_step.py \
-  --backend blocked \
+  --n-poems 10000 \
+  --m-rated 2000 \
   --fit-backend native_reference \
-  --n-poems 5000 \
-  --m-rated 1000 \
-  --scalapack-launcher mpirun \
-  --scalapack-nprocs 4 \
-  --scalapack-block-size 128 \
-  --scalapack-native-backend scalapack \
-  --output-csv results/test.csv \
-  --append
-
-# 16 processes, block size 256
-python scripts/bench_step.py \
-  --backend blocked \
-  --fit-backend native_reference \
-  --n-poems 5000 \
-  --m-rated 1000 \
-  --scalapack-launcher mpirun \
   --scalapack-nprocs 16 \
-  --scalapack-block-size 256 \
-  --scalapack-native-backend scalapack \
-  --output-csv results/test.csv \
-  --append
+  --scalapack-block-size 128 \
+  --score-backend gpu
 ```
 
 ---
 
 ## Interpreting Results
 
-### What to Look For
+### 1. Scaling Behavior (Log-Log Plots)
 
-1. **Crossover Point**: At what `m_rated` does ScaLAPACK become faster than Python?
-   - **Expected**: m ≈ 5,000-10,000 (depends on overhead optimizations)
-   - **Goal**: m ≈ 1,000-2,000 (after Milestone 1B)
+**What to look for**: Slope on log-log plot reveals complexity.
 
-2. **Scaling Efficiency**: How close is actual speedup to ideal?
-   - **Good**: 80-90% of ideal speedup for 2-8 processes
-   - **Fair**: 60-80% of ideal speedup
-   - **Poor**: <60% indicates communication overhead dominates
+Fit time vs m (log-log):
+```
+Slope ≈ 3 → O(m³) scaling (Cholesky factorization)
+Slope < 3 → Sublinear (communication overhead or BLAS optimization)
+Slope > 3 → Superlinear (memory thrashing, cache effects)
+```
 
-3. **Optimal Block Size**: Which block size performs best?
-   - **Typical**: 128-256 for m ≈ 5,000-10,000
-   - **Larger m**: Prefer larger block sizes (256-512)
-   - **Hardware-dependent**: Test on your specific cluster
+Score time vs m (log-log):
+```
+Slope ≈ 2 → O(m²) scaling (variance computation dominates)
+Slope ≈ 1 → O(m) scaling (mean-only computation)
+```
 
-### Known Bottlenecks (Current Implementation)
+**Example interpretation**:
+```
+m = 100:   Fit = 0.01s  (slope not visible yet)
+m = 1000:  Fit = 0.10s  (10× increase for 10× m → linear?)
+m = 10000: Fit = 10s    (100× increase for 10× m → cubic!)
+```
 
-As identified in the analysis:
+The cubic scaling emerges at larger m.
 
-1. **Dense matrix materialization on root** (~0.5-1.0s for m=10k)
-2. **Point-to-point distribution overhead** (~0.3-0.5s)
-3. **Gather overhead for compatibility** (~0.8-1.0s)
-4. **Subprocess launch overhead** (~0.1-0.2s)
+### 2. Overhead vs Compute
 
-**Total overhead**: ~2-3 seconds for m=10k
+**Small problems** (overhead dominates):
+```
+m = 500:
+  Python:    0.01s (baseline)
+  PyBind11:  0.001s (10× faster - eliminated overhead)
+  ScaLAPACK: 2.5s (250× slower - overhead dominates!)
+```
 
-These will be addressed in Milestone 1B (distributed kernel assembly).
+Overhead sources:
+- Subprocess spawn: ~160ms
+- File I/O: ~50ms
+- MPI initialization: ~100ms
+- Communication: Depends on m and process count
+
+**Large problems** (compute dominates):
+```
+m = 20k:
+  Python:    10s (single-node baseline)
+  ScaLAPACK: 6s (16 ranks, 1.7× faster - parallelism wins)
+```
+
+**Crossover point**: m ≈ 7-10k (overhead = speedup)
+
+### 3. Parallel Scaling
+
+**Ideal scaling** (embarrassingly parallel):
+```
+P processes → P× speedup
+```
+
+**Realistic scaling** (with communication):
+```
+Speedup = P / (1 + α·(P-1))
+
+α = communication fraction
+α = 0   → ideal (embarrassingly parallel)
+α = 0.1 → 90% parallel efficiency
+α = 0.5 → Amdahl's law limiting
+```
+
+**What to look for**:
+```
+1 → 4 processes:  3.5× speedup (good!)
+4 → 16 processes: 3.0× speedup (diminishing returns)
+16 → 64 processes: 1.8× speedup (overhead dominates)
+```
+
+**Interpretation**: Communication overhead grows with process count.
+
+### 4. Block Size Effects
+
+ScaLAPACK block size trades off:
+- **Large blocks**: Less communication, more sequential work per process
+- **Small blocks**: More communication, better load balance
+
+**Typical results**:
+```
+Block = 32:  Good for small m, high communication
+Block = 128: Sweet spot for most problems
+Block = 512: Good for large m, minimal communication
+```
+
+**What to look for**:
+- Small m: Block size matters little (overhead dominates)
+- Large m: Larger blocks often win (reduce communication)
+
+### 5. GPU Crossover
+
+**Cold-start overhead**:
+```
+m = 100:
+  CPU: 0.05s
+  GPU: 0.27s (5× slower - transfer dominates)
+```
+
+**Compute payoff**:
+```
+m = 500:
+  CPU: 0.35s
+  GPU: 0.08s (4.6× faster - compute dominates)
+```
+
+**What determines crossover**:
+- Transfer overhead: Fixed (~150ms)
+- Compute time: Grows as O(nm²)
+- Crossover: When compute > transfer
 
 ---
 
-## Troubleshooting
+## Common Patterns
 
-### Build Errors
+### Pattern 1: Overhead Wall
 
-```bash
-# Check if ScaLAPACK is available
-ldd native/build/scalapack_gp_fit | grep scalapack
-
-# Rebuild from scratch
-rm -rf native/build
-cmake -S native -B native/build
-cmake --build native/build
+```
+All ScaLAPACK times ≈ 2.5s for m < 5k
 ```
 
-### MPI Errors
+**Interpretation**: Overhead (subprocess + MPI) is ~2.5s regardless of m.
+**Conclusion**: Don't use ScaLAPACK for small problems.
 
-```bash
-# Check MPI is working
-mpirun -n 4 hostname
+### Pattern 2: Cubic Scaling
 
-# If using Open MPI, ensure binding is disabled
-export OMPI_MCA_hwloc_base_binding_policy=none
-export OMPI_MCA_rmaps_base_mapping_policy=slot
+```
+Log-log plot: Slope ≈ 3
 ```
 
-### Out of Memory
+**Interpretation**: Cholesky factorization is O(m³) as expected.
+**Conclusion**: Problem gets expensive fast - need parallelization for large m.
 
-For large problems (m > 20,000), you may need more memory:
+### Pattern 3: Scaling Plateau
 
-```bash
-# Request more memory in Slurm
-#SBATCH --mem=64G
-
-# Or reduce problem size
-export M_RATED_LIST="100 500 1000 2000 5000"
+```
+1 → 4 → 16 → 64 processes
+Speedup: 1 → 3.5 → 10 → 18 (sublinear)
 ```
 
-### Visualization Errors
+**Interpretation**: Communication overhead increasing with process count.
+**Conclusion**: Diminishing returns beyond ~16 processes for this problem size.
 
-```bash
-# Install missing dependencies
-pip install matplotlib pandas numpy
+### Pattern 4: GPU Dominance
 
-# If matplotlib style not found
-python scripts/visualize_benchmarks.py results/perf_sweep.csv --style default
 ```
+m ≥ 500: GPU consistently 3-4× faster
+```
+
+**Interpretation**: Parallel triangular solves overcome transfer overhead.
+**Conclusion**: Use GPU for scoring when m ≥ 500.
 
 ---
 
-## Next Steps
+## Visualization Outputs
 
-After analyzing the baseline performance:
+### 1. Performance vs Problem Size
 
-1. **Identify bottlenecks**: Which component dominates runtime?
-2. **Implement optimizations**: See `docs/NATIVE_HPC_ROADMAP.md`
-3. **Re-benchmark**: Compare before/after performance
-4. **Scale up**: Test on larger problems (m = 50,000+)
+**X-axis**: m (rated points)
+**Y-axis**: Time (seconds)
+**Lines**: Different backends (Python, PyBind11, ScaLAPACK)
 
-For questions or issues, see the main `README.md` or open an issue on GitHub.
+**What to look for**:
+- Cubic scaling (straight line on log-log, slope ≈ 3)
+- Crossover point (where lines intersect)
+- Overhead floor (ScaLAPACK flat at small m)
+
+### 2. Scaling Analysis
+
+**X-axis**: Number of processes
+**Y-axis**: Speedup vs single-process
+
+**What to look for**:
+- Compare to ideal (dotted line)
+- Parallel efficiency (actual / ideal)
+- Diminishing returns (plateau)
+
+### 3. Block Size Comparison
+
+**X-axis**: m (rated points)
+**Y-axis**: Time (seconds)
+**Lines**: Different block sizes (64, 128, 256, 512)
+
+**What to look for**:
+- Optimal block size for each m
+- Convergence at large m (block size matters less)
+
+### 4. GPU vs CPU
+
+**X-axis**: m (rated points)
+**Y-axis**: Time (seconds)
+**Lines**: CPU (1 thread), CPU (8 threads), GPU
+
+**What to look for**:
+- Crossover point (GPU becomes faster)
+- Threading benefit (8 threads vs 1 thread)
+- GPU speedup (CPU time / GPU time)
+
+---
+
+## Benchmarking Workflow
+
+### 1. Establish Baseline
+
+```bash
+# Python reference (always available)
+python scripts/bench_step.py --fit-backend python --m-rated 100 500 1000
+```
+
+### 2. Test PyBind11
+
+```bash
+# Zero-overhead single-node
+python scripts/bench_step.py --fit-backend native_lapack --m-rated 100 500 1000
+```
+
+**Expected**: 10× faster than Python (eliminates overhead).
+
+### 3. Test ScaLAPACK
+
+```bash
+# Distributed memory
+sbatch scripts/quick_bench_test.slurm
+```
+
+**Expected**: Slower than Python for m < 5k (overhead dominates).
+
+### 4. Find Crossover
+
+```bash
+# Test around expected crossover (m ≈ 7-10k)
+sbatch scripts/large_scale_bench.slurm
+```
+
+**Expected**: ScaLAPACK wins for m > 10k with 8-16 processes.
+
+### 5. Test GPU
+
+```bash
+# GPU scoring
+sbatch scripts/gpu_scoring_bench.slurm
+```
+
+**Expected**: GPU wins for m ≥ 500 (3-4× speedup).
+
+---
+
+## Profiling Individual Runs
+
+For detailed timing breakdown:
+
+```python
+result = run_blocked_step(
+    embeddings, rated_indices, ratings,
+    fit_backend="native_reference",
+    score_backend="gpu",
+)
+
+# Examine profile
+print(f"Fit:     {result.profile.fit_seconds:.3f}s")
+print(f"Score:   {result.profile.score_seconds:.3f}s")
+print(f"Select:  {result.profile.select_seconds:.3f}s")
+print(f"Total:   {result.profile.total_seconds:.3f}s")
+```
+
+**What to look for**:
+- Which phase dominates? (Fit vs Score vs Select)
+- Does it match expectations? (O(m³) vs O(nm²))
+- Where should optimization focus?
+
+---
+
+## Common Issues
+
+### Issue: ScaLAPACK Not Faster
+
+**Symptoms**: ScaLAPACK slower than Python for all m.
+
+**Possible causes**:
+1. Problem too small (m < 10k): Overhead dominates
+2. Too few processes (P < 8): Not enough parallelism
+3. Wrong block size: Try 128 or 256
+4. Communication overhead: Check network latency
+
+**Debug**:
+```bash
+# Test with different parameters
+python scripts/bench_step.py \
+  --m-rated 20000 \
+  --scalapack-nprocs 16 \
+  --scalapack-block-size 128
+```
+
+### Issue: GPU Slower Than CPU
+
+**Symptoms**: GPU always slower.
+
+**Possible causes**:
+1. Problem too small (m < 500): Transfer overhead dominates
+2. CPU heavily multi-threaded: BLAS using all cores
+3. Old GPU: Compute units insufficient
+
+**Debug**:
+```bash
+# Test with larger m
+python scripts/bench_scoring.py --m-rated 1000 2000 5000
+```
+
+### Issue: Scaling Plateau
+
+**Symptoms**: Speedup stops improving beyond P=8.
+
+**Possible causes**:
+1. Communication overhead: Amdahl's law
+2. Load imbalance: Some processes idle
+3. Problem too small: Not enough work per process
+
+**Interpretation**: Normal behavior - parallel efficiency drops with process count.
+
+---
+
+## Key Takeaways
+
+1. **Measure, don't guess**: Theory says O(m³), but overhead changes everything
+2. **Overhead matters**: Small problems need simple solutions
+3. **Crossover points are real**: No single backend wins everywhere
+4. **Scaling is limited**: Communication and Amdahl's law limit speedup
+5. **Visualize results**: Log-log plots reveal scaling behavior
+
+**For teaching**:
+- Benchmarking connects theory (O(m³)) to practice (actual timings)
+- Overhead vs compute is a fundamental HPC tradeoff
+- Parallel scaling limits are measurable, not theoretical
+
+---
+
+## Scripts Reference
+
+| Script | Purpose | Time |
+|--------|---------|------|
+| `quick_bench_test.slurm` | Quick validation (m < 2k) | 5 min |
+| `large_scale_bench.slurm` | Comprehensive sweep (m up to 30k) | 12 hrs |
+| `gpu_scoring_bench.slurm` | GPU vs CPU comparison | 30 min |
+| `bench_step.py` | Custom benchmarks | Varies |
+| `visualize_benchmarks.py` | Generate plots | 1 min |
+
+**Typical workflow**:
+1. Quick test to verify setup
+2. Overnight comprehensive sweep
+3. Visualize and analyze results
+4. Custom benchmarks for specific questions
