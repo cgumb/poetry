@@ -10,9 +10,36 @@ set(POETRY_SCALAPACK_LIBRARY "" CACHE STRING "Optional explicit path to a ScaLAP
 
 find_package(MPI REQUIRED)
 
-# Prefer OpenBLAS over FlexiBLAS to avoid dual-library conflicts
-set(BLA_VENDOR OpenBLAS)
-find_package(BLAS REQUIRED)
+# Configurable BLAS vendor preference with automatic fallback
+set(POETRY_BLAS_VENDOR "OpenBLAS" CACHE STRING "Preferred BLAS vendor (OpenBLAS, Generic, FlexiBLAS, etc.)")
+
+# Try preferred BLAS vendor first
+if(POETRY_BLAS_VENDOR AND NOT POETRY_BLAS_VENDOR STREQUAL "Generic")
+  set(BLA_VENDOR ${POETRY_BLAS_VENDOR})
+  find_package(BLAS QUIET)
+  if(BLAS_FOUND)
+    message(STATUS "BLAS found using vendor: ${POETRY_BLAS_VENDOR}")
+  else()
+    message(STATUS "BLAS vendor ${POETRY_BLAS_VENDOR} not found, trying generic BLAS...")
+    unset(BLA_VENDOR)
+    find_package(BLAS QUIET)
+    if(BLAS_FOUND)
+      message(STATUS "BLAS found (generic)")
+    endif()
+  endif()
+else()
+  # User explicitly requested Generic or unset
+  unset(BLA_VENDOR)
+  find_package(BLAS QUIET)
+  if(BLAS_FOUND)
+    message(STATUS "BLAS found (generic)")
+  endif()
+endif()
+
+# Final check - only fail if no BLAS found at all
+if(NOT BLAS_FOUND)
+  message(FATAL_ERROR "Could not find BLAS library. Try setting -DPOETRY_BLAS_VENDOR=Generic or install a BLAS library (e.g., openblas-devel, blas-devel).")
+endif()
 
 set(POETRY_SCALAPACK_FOUND FALSE)
 set(POETRY_SCALAPACK_LIBRARIES "")
