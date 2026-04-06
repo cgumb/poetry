@@ -145,6 +145,7 @@ def measure_fit_scaling(
                 fit_backend=args.fit_backend,
                 score_backend="none",  # Skip scoring
                 optimize_hyperparameters=False,
+                scalapack_launcher="mpirun",  # Use mpirun inside Slurm jobs
                 scalapack_nprocs=args.scalapack_nprocs,
                 scalapack_block_size=args.scalapack_block_size,
             )
@@ -224,6 +225,7 @@ def measure_score_vs_m(
                 fit_backend=args.fit_backend,
                 score_backend=args.score_backend,
                 optimize_hyperparameters=False,
+                scalapack_launcher="mpirun",  # Use mpirun inside Slurm jobs
                 scalapack_nprocs=args.scalapack_nprocs,
                 scalapack_block_size=args.scalapack_block_size,
             )
@@ -304,6 +306,7 @@ def measure_score_vs_n(
                 fit_backend=args.fit_backend,
                 score_backend=args.score_backend,
                 optimize_hyperparameters=False,
+                scalapack_launcher="mpirun",  # Use mpirun inside Slurm jobs
                 scalapack_nprocs=args.scalapack_nprocs,
                 scalapack_block_size=args.scalapack_block_size,
             )

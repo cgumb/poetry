@@ -126,6 +126,7 @@ def measure_backend(
                 fit_backend=backend,
                 score_backend="none",
                 optimize_hyperparameters=False,
+                scalapack_launcher="mpirun",  # Use mpirun inside Slurm jobs
                 scalapack_nprocs=args.scalapack_nprocs,
                 scalapack_block_size=args.scalapack_block_size,
             )
@@ -141,6 +142,7 @@ def measure_backend(
             fit_backend=backend,
             score_backend="none",  # Focus on fit only
             optimize_hyperparameters=False,
+            scalapack_launcher="mpirun",  # Use mpirun inside Slurm jobs (avoid nested srun)
             scalapack_nprocs=args.scalapack_nprocs,
             scalapack_block_size=args.scalapack_block_size,
         )
