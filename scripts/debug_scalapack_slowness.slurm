@@ -67,7 +67,7 @@ print("RESULTS")
 print("=" * 80)
 print(f"Total time: {end - start:.4f}s")
 print(f"Fit time: {result.profile.fit_seconds:.4f}s")
-print(f"Alpha shape: {result.gp_state.alpha.shape}")
+print(f"Alpha shape: {result.state.alpha.shape}")
 print()
 print("Expected: ~2-3s (mostly overhead)")
 if end - start > 5.0:
