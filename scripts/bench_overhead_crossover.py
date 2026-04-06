@@ -34,7 +34,7 @@ from pathlib import Path
 import numpy as np
 
 from poetry_gp.backends.blocked import run_blocked_step
-from poetry_gp.backends.backend_selection import is_backend_available
+from poetry_gp.backends.backend_selection import get_backend_info
 
 
 def parse_args() -> argparse.Namespace:
@@ -166,12 +166,13 @@ def main() -> None:
     args = parse_args()
 
     # Check backend availability
+    backend_info = get_backend_info()
     available_backends = []
     for backend in args.backends:
         if backend == "python":
             available_backends.append(backend)
         elif backend == "native_lapack":
-            if is_backend_available("native_lapack"):
+            if backend_info.get("native_lapack", False):
                 available_backends.append(backend)
             else:
                 print(f"WARNING: {backend} not available, skipping")
