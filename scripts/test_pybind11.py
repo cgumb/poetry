@@ -66,12 +66,10 @@ def test_fit_correctness() -> None:
     print(f"  |lml_scipy - lml_native| = {lml_diff:.2e}")
 
     if alpha_diff > 1e-8:
-        print(f"\n✗ ERROR: alpha differs by {alpha_diff:.2e} (expected < 1e-8)")
-        return
+        raise AssertionError(f"alpha differs by {alpha_diff:.2e} (expected < 1e-8)")
 
     if lml_diff > 1e-8:
-        print(f"\n✗ ERROR: lml differs by {lml_diff:.2e} (expected < 1e-8)")
-        return
+        raise AssertionError(f"lml differs by {lml_diff:.2e} (expected < 1e-8)")
 
     print("\n✓ TEST PASSED: Results match scipy within tolerance")
 
@@ -115,12 +113,10 @@ def test_predict_correctness() -> None:
     print(f"  ||var_scipy - var_native|| = {var_diff:.2e}")
 
     if mean_diff > 1e-8:
-        print(f"\n✗ ERROR: mean differs by {mean_diff:.2e} (expected < 1e-8)")
-        return
+        raise AssertionError(f"mean differs by {mean_diff:.2e} (expected < 1e-8)")
 
     if var_diff > 1e-8:
-        print(f"\n✗ ERROR: variance differs by {var_diff:.2e} (expected < 1e-8)")
-        return
+        raise AssertionError(f"variance differs by {var_diff:.2e} (expected < 1e-8)")
 
     print("\n✓ TEST PASSED: Predictions match scipy within tolerance")
 
@@ -217,16 +213,14 @@ def test_optional_cholesky() -> None:
     print(f"✓ Fit without Cholesky: cho_factor_data={state_no_chol.cho_factor_data}")
 
     if state_no_chol.cho_factor_data is not None:
-        print("\n✗ ERROR: cho_factor_data should be None when return_chol=False")
-        return
+        raise AssertionError("cho_factor_data should be None when return_chol=False")
 
     # Fit with Cholesky
     state_with_chol = fit_exact_gp_native(x_rated, y_rated, return_chol=True)
     print(f"✓ Fit with Cholesky: cho_factor_data is not None: {state_with_chol.cho_factor_data is not None}")
 
     if state_with_chol.cho_factor_data is None:
-        print("\n✗ ERROR: cho_factor_data should NOT be None when return_chol=True")
-        return
+        raise AssertionError("cho_factor_data should NOT be None when return_chol=True")
 
     print("\n✓ TEST PASSED: Optional Cholesky works correctly")
 
