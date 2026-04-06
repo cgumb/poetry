@@ -114,6 +114,8 @@ struct NativeResult {
     double logdet = 0.0;
     std::vector<double> alpha;
     std::vector<double> chol;
+    bool has_alpha = false;
+    bool has_chol = false;
 };
 
 #ifdef HAVE_SCALAPACK
@@ -128,6 +130,8 @@ NativeResult run_scalapack_distributed(
     double variance,
     double noise,
     int block_size,
+    bool return_alpha,
+    bool return_chol,
     MPI_Comm comm
 );
 #endif
@@ -701,6 +705,8 @@ int main(int argc, char** argv) {
                 req.d,
                 req.length_scale, req.variance, req.noise,
                 req.block_size,
+                true,   // return_alpha
+                true,   // return_chol
                 MPI_COMM_WORLD
             );
 
@@ -878,6 +884,8 @@ int main(int argc, char** argv) {
                     req.d,
                     req.length_scale, req.variance, req.noise,
                     req.block_size,
+                    true,   // return_alpha
+                    true,   // return_chol
                     MPI_COMM_WORLD
                 );
 #endif
