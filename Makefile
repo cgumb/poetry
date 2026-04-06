@@ -30,9 +30,16 @@ native-build:
 		echo "  PyBind11 module: $(BUILD_DIR)/poetry_gp_native*.so"; \
 		echo ""; \
 		if ls $(BUILD_DIR)/poetry_gp_native*.so 1> /dev/null 2>&1; then \
-			echo "Installing PyBind11 module to Python path..."; \
-			cp $(BUILD_DIR)/poetry_gp_native*.so .; \
-			echo "✓ Module installed: poetry_gp_native.so"; \
+			echo "Installing PyBind11 module to Python site-packages..."; \
+			SITE_PACKAGES=$$(python -c "import site; print(site.getsitepackages()[0])"); \
+			if [ -n "$$SITE_PACKAGES" ] && [ -d "$$SITE_PACKAGES" ]; then \
+				cp $(BUILD_DIR)/poetry_gp_native*.so "$$SITE_PACKAGES/"; \
+				echo "✓ Module installed to: $$SITE_PACKAGES/poetry_gp_native*.so"; \
+			else \
+				echo "⚠ Failed to find site-packages, falling back to repo root"; \
+				cp $(BUILD_DIR)/poetry_gp_native*.so .; \
+				echo "✓ Module copied to repo root (add repo to PYTHONPATH)"; \
+			fi; \
 		else \
 			echo "⚠ PyBind11 module not found. Check CMake output above."; \
 		fi; \
@@ -48,6 +55,12 @@ native-clean:
 		rm -rf native/build; \
 	fi
 	rm -f poetry_gp_native*.so
+	@# Also remove from site-packages if it exists there
+	@SITE_PACKAGES=$$(python -c "import site; print(site.getsitepackages()[0])" 2>/dev/null); \
+	if [ -n "$$SITE_PACKAGES" ] && [ -f "$$SITE_PACKAGES/poetry_gp_native"*.so ]; then \
+		echo "  Removing from site-packages: $$SITE_PACKAGES"; \
+		rm -f "$$SITE_PACKAGES/poetry_gp_native"*.so; \
+	fi
 	@echo "✓ Native build cleaned"
 
 # Run all tests
