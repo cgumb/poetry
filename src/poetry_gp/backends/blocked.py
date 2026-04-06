@@ -202,7 +202,7 @@ def run_blocked_step(
     n = len(embeddings)
 
     if fit_backend == "auto":
-        fit_backend = select_fit_backend(m, manual_override=None)
+        fit_backend = select_fit_backend(m, manual_override=None, optimize_hyperparameters=optimize_hyperparameters)
 
     if score_backend == "auto":
         score_backend = select_score_backend(n, m, manual_override=None)
