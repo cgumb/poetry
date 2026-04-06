@@ -108,13 +108,15 @@ bool compiled_with_scalapack() {
 }
 
 std::string normalize_backend_name(const std::string& backend) {
-  if (backend == "auto") {
+  // "auto" and "native_reference" both prefer ScaLAPACK if available
+  if (backend == "auto" || backend == "native_reference") {
     return compiled_with_scalapack() ? "scalapack" : "mpi_row_partitioned_reference";
   }
-  if (backend == "mpi" || backend == "native_reference") {
+  // Explicit backend names (for testing/debugging)
+  if (backend == "mpi" || backend == "mpi_row_partitioned_reference") {
     return "mpi_row_partitioned_reference";
   }
-  if (backend == "mpi_row_partitioned_reference" || backend == "scalapack") {
+  if (backend == "scalapack") {
     return backend;
   }
   throw std::runtime_error("Unknown backend requested: " + backend);
