@@ -1,300 +1,217 @@
-# Acquisition Functions for GP-Based Recommendation
-
-This document describes the acquisition functions implemented for exploit/explore recommendations in the poetry GP system.
+# Acquisition Functions for Exploration
 
 ## Overview
 
-An **acquisition function** determines which point to select next based on the GP posterior. Different functions optimize different objectives.
+Poetry GP supports multiple acquisition functions for exploration. Each has different computational complexity and exploration behavior.
 
-## Exploitation Strategies (Finding Best Items)
+## Available Strategies
 
-Used when running the **exploit** command - recommending poems you're likely to enjoy.
+### 1. `max_variance` (Recommended for Large Scale)
 
-### 1. Max Mean (Simple)
+**What it does**: Selects the point with highest posterior variance.
 
-**Formula:** `argmax μ(x)`
+**Complexity**: O(n) - instant for any n
 
-**What it does:**
-- Picks the poem with the highest predicted rating
-- Ignores uncertainty completely
-
-**When to use:**
-- When you trust the model (many ratings, low uncertainty)
-- Speed is critical
-- You want the "safest bet" based on current knowledge
-
-**Limitations:**
-- **Risky for uncertain poems**: A poem might have μ=4.5 but σ=2.0 (could be anywhere from 2.5 to 6.5!)
-- Ignores exploration entirely
-
-**Complexity:** O(n) - just find max of mean array
-
----
-
-### 2. UCB - Upper Confidence Bound (RECOMMENDED)
-
-**Formula:** `argmax μ(x) + β·σ(x)`
-
-**What it does:**
-- Balances predicted quality (μ) and uncertainty (σ)
-- Higher β = more optimistic/exploratory
-- Industry standard for recommendation systems
-
-**Parameters:**
-- `β = 1.0`: More exploitation (trust the mean)
-- `β = 2.0`: **Balanced (recommended default)**
-- `β = 3.0`: More exploration (favor uncertainty)
-
-**When to use:**
-- **Default choice for most applications**
-- When you want confident recommendations
-- When avoiding bad recommendations is important
-
-**Example:**
-```
-Poem A: μ=4.0, σ=0.5  →  UCB = 4.0 + 2.0×0.5 = 5.0
-Poem B: μ=3.5, σ=1.0  →  UCB = 3.5 + 2.0×1.0 = 5.5 ← Selected!
-```
-
-Poem B is selected because its uncertainty gives it potential upside despite lower mean.
-
-**Theory:** UCB has **theoretical guarantees** for minimizing regret in multi-armed bandit problems.
-
-**Complexity:** O(n) - compute mean + β·std for all points
-
----
-
-### 3. LCB - Lower Confidence Bound (Conservative)
-
-**Formula:** `argmax μ(x) - β·σ(x)`
-
-**What it does:**
-- Pessimistic/conservative recommendation
-- Picks points with high "worst-case" quality
-- Avoids risky uncertain poems
-
-**When to use:**
-- When avoiding bad recommendations is critical
-- Conservative exploration
-- High-stakes scenarios
-
-**Example:**
-```
-Poem A: μ=4.0, σ=0.5  →  LCB = 4.0 - 2.0×0.5 = 3.0
-Poem B: μ=3.5, σ=1.0  →  LCB = 3.5 - 2.0×1.0 = 1.5
-```
-
-Poem A is selected because it has a better "worst case" (3.0 vs 1.5).
-
-**Complexity:** O(n)
-
----
-
-### 4. Thompson Sampling (Bayesian Optimal)
-
-**Formula:** Sample `f(x) ~ N(μ(x), σ²(x))` for all x, return `argmax f(x)`
-
-**What it does:**
-- Randomly samples from the posterior distribution
-- Returns the max of the sampled function
-- Naturally explores uncertain regions
-
-**When to use:**
-- Want diverse recommendations across sessions
-- Theoretical optimality for bandits
-- More "natural" exploration than deterministic methods
-
-**Properties:**
-- **Bayesian optimal** for independent arms
-- **Stochastic** - different recommendations each time
-- **Exploration proportional to uncertainty** - naturally balances exploit/explore
-
-**Example:**
-```
-Poem A: μ=4.0, σ=0.5  →  Sample: 3.8
-Poem B: μ=3.5, σ=1.0  →  Sample: 4.2 ← Selected this time!
-```
-
-Next time, Poem A might be selected if its sample is higher.
-
-**Complexity:** O(n) - sample from n Gaussians
-
----
-
-## Exploration Strategies (Learning Preferences)
-
-Used when running the **explore** command - discovering poems to learn your preferences.
-
-### 1. Max Variance (Information-Theoretic Optimal)
-
-**Formula:** `argmax σ²(x)`
-
-**What it does:**
-- Picks the poem with highest posterior variance
-- **Minimizes posterior entropy** H(f|D)
-- Information-theoretically optimal for GP exploration
-
-**Theory:**
-For a GP, the information gain from observing y at x is:
-```
-IG(x) = H(f|D) - E[H(f|D ∪ {x,y})] = (1/2) log(σ²(x) + σₙ²)
-```
-
-This is monotonic in σ²(x), so **max variance = max information gain**!
-
-**When to use:**
-- **Default exploration strategy** - provably optimal
-- Fast - O(1) since variance already computed
+**When to use**:
 - Large candidate sets (n > 10k)
+- Real-time recommendation
+- When iteration speed matters
 
-**Limitations:**
-- Ignores spatial correlation between points
-- May repeatedly query isolated high-variance regions
+**Exploration behavior**:
+- Information-theoretically optimal for minimizing entropy
+- Picks most uncertain point
+- Simple, effective, fast
 
-**Complexity:** O(n) - already computed, just find max
-
----
-
-### 2. Spatial Diverse (Mean Variance Reduction)
-
-**Formula:** `argmax Σᵢ k(xᵢ, x*)² / (σ²(x*) + σₙ²)`
-
-**What it does:**
-- Picks the point that would **reduce total uncertainty** across ALL candidates
-- Considers spatial correlation via kernel k(·,·)
-- More spatially diverse exploration than max variance
-
-**Theory:**
-Observing y* at x* updates variance at another point xᵢ as:
+**Performance for n=85k**:
 ```
-σ²_new(xᵢ) = σ²(xᵢ) - k(xᵢ, x*)² / (σ²(x*) + σₙ²)
+Select time: ~0.001 seconds
 ```
 
-Summing across all points gives total variance reduction.
-
-**When to use:**
-- Exploration quality > speed
-- Want spatially diverse coverage
-- Smaller candidate sets (n < 5k)
-
-**Limitations:**
-- **Expensive**: O(n² × d) for pairwise kernel + O(n²) for scoring
-- For n=10k, that's 100M kernel evaluations!
-
-**Example:**
-```
-Point A: σ²=2.0, but isolated (low k(xᵢ, A) for most i)
-  → SVR(A) = small (doesn't tell us much about other points)
-
-Point B: σ²=1.5, but central (high k(xᵢ, B) for many i)
-  → SVR(B) = large (tells us about many nearby points)
-```
-
-Point B is selected for better spatial coverage.
-
-**Complexity:** O(n² × d) - requires pairwise kernel matrix
-
----
-
-### 3. Expected Improvement (Balanced)
-
-**Formula:** `EI(x) = (μ(x) - f_best) · Φ(Z) + σ(x) · φ(Z)`
-
-where:
-- `Z = (μ(x) - f_best) / σ(x)`
-- `Φ = standard normal CDF`
-- `φ = standard normal PDF`
-- `f_best = max observed rating so far`
-
-**What it does:**
-- Balances exploitation (find better than current best) and exploration (high uncertainty)
-- Classic acquisition function from **Bayesian optimization**
-- Measures expected amount by which x improves over current best
-
-**Theory:**
-EI integrates over the posterior to compute expected improvement:
-```
-EI(x) = ∫_{-∞}^{∞} max(0, y - f_best) · N(y | μ(x), σ²(x)) dy
-```
-
-For Gaussian posterior, this has a closed-form solution.
-
-**When to use:**
-- Want balanced explore/exploit in one command
-- Classic choice in Bayesian optimization
-- When you care about improving over current best
-
-**Properties:**
-- **Acquisition**: Returns 0 if μ(x) ≪ f_best and σ(x) ≈ 0 (no hope)
-- **Exploration**: Increases with σ(x)
-- **Exploitation**: Increases with μ(x)
-
-**Example:**
-```
-Current best rating: f_best = 4.0
-
-Poem A: μ=4.5, σ=0.5
-  Z = (4.5-4.0)/0.5 = 1.0
-  EI = 0.5·Φ(1.0) + 0.5·φ(1.0) = 0.5·0.841 + 0.5·0.242 = 0.542
-
-Poem B: μ=3.0, σ=2.0
-  Z = (3.0-4.0)/2.0 = -0.5
-  EI = -1.0·Φ(-0.5) + 2.0·φ(-0.5) = -1.0·0.309 + 2.0·0.352 = 0.395
-```
-
-Poem A selected (higher EI despite lower variance).
-
-**Complexity:** O(n) - evaluate EI formula for each point
-
----
-
-## Computational Complexity Summary
-
-| Strategy | Complexity | Notes |
-|----------|------------|-------|
-| **Max Mean** | O(n) | Requires mean only (can skip variance!) |
-| **UCB/LCB** | O(n) | Requires both mean and variance |
-| **Thompson** | O(n) | Requires both mean and variance |
-| **Max Variance** | O(1) | Already computed, just find max |
-| **Spatial Diverse** | O(n² × d) | **Very expensive** - pairwise kernel |
-| **Expected Improvement** | O(n) | Requires both mean and variance |
-
-## Optional Variance Computation
-
-Variance computation is **expensive**: O(n × m²) due to triangular solve, while mean is only O(n × m).
-
-**Optimization:** Use `compute_variance=False` when:
-- Running **exploit with Max Mean** (doesn't need variance)
-- m is large (variance becomes O(m²) bottleneck)
-
-**Speedup:**
-- m=100: ~1.5× faster
-- m=10,000: ~100× faster!
-
-**Implementation:**
+**Example**:
 ```python
 result = run_blocked_step(
-    embeddings, rated_indices, ratings,
-    exploitation_strategy="max_mean",
-    compute_variance=False,  # Skip expensive variance computation
+    embeddings,
+    rated_indices,
+    ratings,
+    exploration_strategy="max_variance",
 )
 ```
 
-## Strategy Selection Guide
+### 2. `spatial_variance` (Exact Spatial Diversity)
 
-| Goal | Exploitation | Exploration |
-|------|--------------|-------------|
-| **Safe recommendations** | UCB (β=2.0) | Max Variance |
-| **Fastest** | Max Mean | Max Variance |
-| **Most diverse** | Thompson | Spatial Diverse |
-| **Best theory** | UCB | Max Variance |
-| **Balanced explore+exploit** | UCB (β=2.0) | Expected Improvement |
-| **Conservative** | LCB | Max Variance |
-| **Spatially aware** | — | Spatial Diverse |
+**What it does**: Selects the point that maximizes total variance reduction across all candidates, considering spatial correlation.
 
-## References
+**Complexity**: O(n²) - expensive for large n
 
-- **UCB/Thompson**: Slivkins, "Introduction to Multi-Armed Bandits" (2019)
-- **Expected Improvement**: Jones et al., "Efficient Global Optimization of Expensive Black-Box Functions" (1998)
-- **GP Acquisition Functions**: Shahriari et al., "Taking the Human Out of the Loop" (2016)
-- **Information Gain**: Krause & Guestrin, "Near-Optimal Sensor Placements in Gaussian Processes" (2005)
+**When to use**:
+- Small-medium candidate sets (n < 10k)
+- When spatial diversity is critical
+- Batch active learning (select multiple diverse points)
+- When you can afford 8+ seconds per iteration
+
+**Exploration behavior**:
+- Considers full spatial correlation structure
+- Promotes diverse exploration
+- Avoids redundant nearby queries
+- Better coverage of the space
+
+**Performance**:
+```
+n=1k:   0.02 seconds
+n=5k:   0.34 seconds
+n=10k:  1.37 seconds
+n=25k:  8.6 seconds
+n=85k:  ~80 seconds (estimated)
+```
+
+**The cost**: For n=85k, computes 7.2 billion pairwise kernel evaluations.
+
+**Example**:
+```python
+result = run_blocked_step(
+    embeddings,
+    rated_indices,
+    ratings,
+    exploration_strategy="spatial_variance",
+)
+```
+
+**Note**: GPU acceleration was tested but actually **slower** than CPU due to memory-bound nature and transfer overhead. CPU with multi-threaded BLAS is already well-optimized for this operation.
+
+### 3. `expected_improvement` (Balanced Exploit/Explore)
+
+**What it does**: Balances exploitation (high mean) and exploration (high variance) via Expected Improvement acquisition function.
+
+**Complexity**: O(n) - instant for any n
+
+**When to use**:
+- Bayesian optimization scenarios
+- When you want automatic exploitation/exploration balance
+- Standard benchmark comparisons
+
+**Exploration behavior**:
+- Classic Bayesian optimization acquisition function
+- Balances mean and variance naturally
+- Less exploratory than max_variance
+- More focused on optimizing the objective
+
+**Performance for n=85k**:
+```
+Select time: ~0.002 seconds
+```
+
+**Example**:
+```python
+result = run_blocked_step(
+    embeddings,
+    rated_indices,
+    ratings,
+    exploration_strategy="expected_improvement",
+)
+```
+
+## Performance Comparison
+
+| Strategy              | Complexity | n=1k    | n=10k   | n=85k     |
+|-----------------------|-----------|---------|---------|-----------|
+| max_variance          | O(n)      | 0.001s  | 0.001s  | 0.001s    |
+| expected_improvement  | O(n)      | 0.002s  | 0.002s  | 0.002s    |
+| spatial_variance      | O(n²)     | 0.02s   | 1.37s   | ~80s      |
+
+## When Spatial Diversity Matters
+
+`spatial_variance` is valuable when:
+
+1. **Batch active learning**: Selecting k diverse points simultaneously
+   ```python
+   # Select 10 diverse exploration points
+   diverse_indices = []
+   for _ in range(10):
+       result = run_blocked_step(..., exploration_strategy="spatial_variance")
+       diverse_indices.append(result.explore_index)
+       excluded_mask[result.explore_index] = True
+   ```
+
+2. **Coverage requirements**: Need to explore different regions of the space
+
+3. **Small datasets**: n < 10k where O(n²) is acceptable
+
+## When to Use What
+
+### Large-scale recommendation (n=85k poems):
+```python
+# Use max_variance - instant, effective
+exploration_strategy="max_variance"
+```
+
+### Medium-scale with quality focus (n=5k):
+```python
+# Can afford spatial_variance - better diversity
+exploration_strategy="spatial_variance"  # 0.34s per iteration
+```
+
+### Bayesian optimization:
+```python
+# Expected improvement is standard
+exploration_strategy="expected_improvement"
+```
+
+### Interactive CLI with 85k candidates:
+```python
+# max_variance for responsive UX
+exploration_strategy="max_variance"  # 0.001s vs 80s
+```
+
+## Honest Tradeoffs
+
+### For n=85k candidates:
+
+**Option A: Fast exploration** (max_variance)
+- Pro: 0.001s per iteration (instant)
+- Pro: Information-theoretically optimal
+- Con: No explicit spatial diversity
+
+**Option B: Slow exploration** (spatial_variance)
+- Pro: Explicit spatial diversity
+- Pro: Better coverage guarantees
+- Con: ~80s per iteration (8000× slower)
+
+**Reality**: For interactive recommendation with 85k candidates, `max_variance` is the practical choice. `spatial_variance` is simply too expensive for this scale without algorithmic changes (low-rank approximations, different kernel structures, etc.).
+
+## Configuration
+
+Set in `GPConfig`:
+
+```python
+from poetry_gp.config import GPConfig
+
+# Fast exploration (recommended for large n)
+config = GPConfig(exploration_strategy="max_variance")
+
+# Spatial diversity (only for small-medium n)
+config = GPConfig(exploration_strategy="spatial_variance")
+
+# Balanced exploit/explore
+config = GPConfig(exploration_strategy="expected_improvement")
+```
+
+Or pass directly:
+
+```python
+result = run_blocked_step(
+    embeddings,
+    rated_indices,
+    ratings,
+    exploration_strategy="max_variance",  # or "spatial_variance", "expected_improvement"
+)
+```
+
+## Summary
+
+| Need                          | Strategy              | Time (n=85k) |
+|-------------------------------|-----------------------|--------------|
+| **Fast, interactive**         | max_variance          | 0.001s       |
+| **Balanced**                  | expected_improvement  | 0.002s       |
+| **Spatial diversity**         | spatial_variance      | ~80s         |
+
+**Recommendation for Poetry GP with 85k poems**: Use `max_variance` for interactive exploration. The O(n²) cost of `spatial_variance` makes it impractical at this scale.
