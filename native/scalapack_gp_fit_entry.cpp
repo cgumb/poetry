@@ -288,11 +288,13 @@ int main(int argc, char** argv) {
         result = run_scalapack_distributed(
             meta.n, rank, size, x_rated, rhs, meta.d,
             meta.length_scale, meta.variance, meta.noise,
-            args.block_size, MPI_COMM_WORLD);
+            args.block_size, args.return_alpha, args.return_chol, MPI_COMM_WORLD);
       } else {
         // Old path: centralized matrix building
         std::cerr << "[Legacy] Using centralized matrix scatter" << std::endl;
-        result = run_scalapack(meta.n, rank, size, full_matrix, rhs, args.block_size, MPI_COMM_WORLD);
+        result = run_scalapack(
+            meta.n, rank, size, full_matrix, rhs,
+            args.block_size, args.return_alpha, args.return_chol, MPI_COMM_WORLD);
       }
 #else
       result.implemented = false;
@@ -305,22 +307,24 @@ int main(int argc, char** argv) {
     result.requested_backend = args.backend;
 
     if (rank == 0) {
-      std::cerr << "[DEBUG] Result returned. alpha.size()=" << result.alpha.size()
-                << " chol.size()=" << result.chol.size() << std::endl;
+      // Only write outputs that were actually gathered (no placeholders!)
+      std::cerr << "[DEBUG] Result returned. has_alpha=" << result.has_alpha
+                << " has_chol=" << result.has_chol << std::endl;
 
-      if (result.alpha.empty()) {
-        std::cerr << "[DEBUG] Alpha is empty, assigning zeros" << std::endl;
-        result.alpha.assign(meta.n, 0.0);
-      }
-      if (result.chol.empty()) {
-        std::cerr << "[DEBUG] Chol is empty, assigning zeros" << std::endl;
-        result.chol.assign(meta.n * meta.n, 0.0);
+      if (result.has_alpha) {
+        std::cerr << "[DEBUG] Writing alpha to " << args.alpha_bin << " (size=" << result.alpha.size() << ")" << std::endl;
+        write_binary_vector(args.alpha_bin, result.alpha);
+      } else {
+        std::cerr << "[DEBUG] Skipping alpha write (not gathered)" << std::endl;
       }
 
-      std::cerr << "[DEBUG] Writing alpha to " << args.alpha_bin << std::endl;
-      write_binary_vector(args.alpha_bin, result.alpha);
-      std::cerr << "[DEBUG] Writing chol to " << args.chol_bin << std::endl;
-      write_binary_matrix(args.chol_bin, result.chol);
+      if (result.has_chol) {
+        std::cerr << "[DEBUG] Writing chol to " << args.chol_bin << " (size=" << result.chol.size() << ")" << std::endl;
+        write_binary_matrix(args.chol_bin, result.chol);
+      } else {
+        std::cerr << "[DEBUG] Skipping chol write (not gathered)" << std::endl;
+      }
+
       std::cerr << "[DEBUG] Writing output metadata to " << args.output_meta << std::endl;
       write_output_meta(args.output_meta, result, meta.n, size);
 
