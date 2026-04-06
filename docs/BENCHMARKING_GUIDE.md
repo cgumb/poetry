@@ -13,6 +13,24 @@ Performance claims like "ScaLAPACK is faster for large problems" are meaningless
 
 ---
 
+## Quick Start: Pedagogical Benchmark Suite
+
+**For teaching HPC concepts**, we provide a comprehensive benchmark suite that:
+- Validates theoretical complexity (O(m³), O(m²), O(n))
+- Reveals computational bottlenecks
+- Demonstrates overhead vs compute tradeoffs
+
+**Run the full suite**:
+```bash
+sbatch scripts/pedagogical_benchmarks.slurm
+```
+
+This runs three core benchmarks and generates visualizations automatically. Results are saved to `results/pedagogy_TIMESTAMP/`.
+
+**See**: [RUNNING_BENCHMARKS.md](RUNNING_BENCHMARKS.md) for detailed instructions and interpretation.
+
+---
+
 ## What to Measure
 
 ### Fit Performance (O(m³) Cholesky)

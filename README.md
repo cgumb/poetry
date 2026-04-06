@@ -159,33 +159,48 @@ See [`docs/ACQUISITION_FUNCTIONS.md`](docs/ACQUISITION_FUNCTIONS.md) for detaile
 
 ## Benchmarking
 
-### Fit Performance (GP training)
+### Pedagogical Benchmark Suite (Recommended)
+
+For **teaching HPC concepts**, run the comprehensive benchmark suite that validates theory and reveals bottlenecks:
 
 ```bash
-# Quick test (m=100-2000)
-sbatch scripts/quick_bench_test.slurm
+# Run all pedagogical benchmarks (1-2 hours)
+sbatch scripts/pedagogical_benchmarks.slurm
+```
 
-# Large-scale sweep (m=2k-30k, overnight)
-sbatch scripts/large_scale_bench.slurm
+This measures:
+- **Scaling theory validation**: Verify O(m³), O(m²), O(n) on log-log plots
+- **Time breakdown analysis**: Where does time go? (fit vs score vs overhead)
+- **Overhead vs compute**: When does parallelization pay off?
+
+Generates CSV data and publication-quality figures automatically.
+
+**See**: [`docs/RUNNING_BENCHMARKS.md`](docs/RUNNING_BENCHMARKS.md) for detailed instructions and interpretation.
+
+### Individual Benchmarks
+
+```bash
+# Complexity validation
+python scripts/bench_scaling_theory.py \
+  --fit-backend python \
+  --output-csv results/scaling.csv
+
+# Time breakdown
+python scripts/bench_time_breakdown.py \
+  --m-values 100 500 1000 5000 \
+  --n-values 10000 50000 \
+  --output-csv results/breakdown.csv
+
+# Backend comparison
+python scripts/bench_overhead_crossover.py \
+  --backends python native_lapack native_reference \
+  --output-csv results/crossover.csv
 
 # Visualize results
-python scripts/visualize_benchmarks.py results/*.csv
+python scripts/visualize_scaling.py results/*.csv --output-dir figures/
 ```
 
-### Score Performance (Posterior prediction)
-
-```bash
-# GPU vs CPU comparison
-sbatch scripts/gpu_scoring_bench.slurm
-
-# Custom benchmark
-python scripts/bench_scoring.py \
-  --m-rated 100 500 1000 5000 \
-  --n-candidates 25000 \
-  --cpu-threads 8
-```
-
-See [`docs/BENCHMARKING_GUIDE.md`](docs/BENCHMARKING_GUIDE.md) for comprehensive benchmarking guide.
+**See**: [`docs/BENCHMARKING_GUIDE.md`](docs/BENCHMARKING_GUIDE.md) for comprehensive benchmarking guide.
 
 ## HPC Principles Demonstrated
 
