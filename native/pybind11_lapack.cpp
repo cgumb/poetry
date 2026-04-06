@@ -231,10 +231,8 @@ py::dict fit_gp_lapack(
 
     // Copy alpha to Python-owned array
     auto alpha_py = py::array_t<double>(m);
-    auto alpha_buf = alpha_py.mutable_unchecked<1>();
-    for (int i = 0; i < m; ++i) {
-        alpha_buf(i) = alpha[i];
-    }
+    double* alpha_out = static_cast<double*>(alpha_py.request().ptr);
+    std::memcpy(alpha_out, alpha.data(), m * sizeof(double));
     result["alpha"] = alpha_py;
 
     result["logdet"] = logdet;
@@ -250,17 +248,13 @@ py::dict fit_gp_lapack(
         }
 
         // Return lower Cholesky in Fortran-order (column-major)
-        // chol is already in column-major format
+        // chol is already in column-major format, just copy directly
         auto chol_py = py::array_t<double>(
             {m, m},                                    // shape
-            {sizeof(double), m * sizeof(double)}      // strides: column-major
+            {sizeof(double), m * sizeof(double)}      // strides: column-major (F-order)
         );
-        auto chol_buf = chol_py.mutable_unchecked<2>();
-        for (int i = 0; i < m; ++i) {
-            for (int j = 0; j < m; ++j) {
-                chol_buf(i, j) = chol[j * m + i];  // Read from column-major storage
-            }
-        }
+        double* chol_out = static_cast<double*>(chol_py.request().ptr);
+        std::memcpy(chol_out, chol.data(), m * m * sizeof(double));
         result["chol_lower"] = chol_py;
     }
 
