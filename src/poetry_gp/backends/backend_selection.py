@@ -28,18 +28,15 @@ def select_fit_backend(
 
     Decision tree:
         - manual_override: Use specified backend (no auto-selection)
-        - optimize_hyperparameters: Must use "python" (only backend with HP support)
         - m < 5000 + native available: "native_lapack" (instant, zero overhead)
         - m < 10000: "python" (scipy, good enough)
         - m >= 10000: "native_reference" (ScaLAPACK MPI for large problems)
+
+    Note: All backends now support hyperparameter optimization.
     """
     # Manual override takes precedence
     if manual_override and manual_override != "auto":
         return manual_override
-
-    # Hyperparameter optimization requires python backend
-    if optimize_hyperparameters:
-        return "python"
 
     # Check availability
     try:

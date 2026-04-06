@@ -249,8 +249,6 @@ def run_blocked_step(
             verbose=scalapack_verbose,
         )
     elif fit_backend == "native_lapack":
-        if optimize_hyperparameters:
-            raise ValueError("native_lapack fit backend does not support hyperparameter optimization yet")
         if not is_native_available():
             raise ImportError(
                 "native_lapack backend requires poetry_gp_native module. "
@@ -265,6 +263,8 @@ def run_blocked_step(
             variance=variance,
             noise=noise,
             return_chol=compute_variance,  # Only if variance will be computed
+            optimize_hyperparameters=optimize_hyperparameters,
+            optimizer_maxiter=optimizer_maxiter,
             verbose=scalapack_verbose,  # Reuse verbose flag
         )
     else:

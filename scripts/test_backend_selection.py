@@ -44,15 +44,6 @@ def test_selection_logic():
 
     print()
 
-    # Test with hyperparameter optimization
-    print("Fit Backend Selection (with HP optimization):")
-    print("-" * 40)
-    for m, label in test_cases:
-        backend = select_fit_backend(m, optimize_hyperparameters=True)
-        print(f"  {label:<20} → {backend}")
-
-    print()
-
     # Test score backend selection
     print("Score Backend Selection:")
     print("-" * 40)
