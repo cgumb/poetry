@@ -229,15 +229,16 @@ py::dict fit_gp_lapack(
     // Build result dictionary with Python-owned arrays
     py::dict result;
 
-    // Copy alpha to Python-owned array with explicit strides
-    auto alpha_py = py::array_t<double>(
-        {m},              // shape: 1D array of size m
-        {sizeof(double)}  // strides: contiguous (each element is sizeof(double) apart)
-    );
-    double* alpha_out = static_cast<double*>(alpha_py.request().ptr);
+    // Copy alpha to Python-owned array
+    // Use default constructor which creates proper contiguous array
+    auto alpha_py = py::array_t<double>(m);
+    double* alpha_out = alpha_py.mutable_data();
     std::memcpy(alpha_out, alpha.data(), m * sizeof(double));
 
-    // Debug: verify copy
+    // Debug: verify copy and strides
+    auto alpha_info = alpha_py.request();
+    std::fprintf(stderr, "alpha_py shape=[%ld], stride=[%ld bytes]\n",
+                 alpha_info.shape[0], alpha_info.strides[0]);
     std::fprintf(stderr, "alpha copied to Python: [");
     for (int i = 0; i < m; ++i) {
         std::fprintf(stderr, "%.6f%s", alpha_out[i], i < m-1 ? ", " : "");
