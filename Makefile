@@ -17,7 +17,7 @@ native-build:
 	@echo ""
 	mkdir -p $(BUILD_DIR)
 	cd $(BUILD_DIR) && \
-	cmake ../.. \
+	cmake .. \
 		-DPOETRY_ENABLE_SCALAPACK=$(ENABLE_SCALAPACK) \
 		-DPOETRY_ENABLE_PYBIND11=$(ENABLE_PYBIND11) \
 		-DCMAKE_BUILD_TYPE=Release && \
