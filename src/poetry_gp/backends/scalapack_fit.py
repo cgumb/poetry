@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import warnings
@@ -87,7 +88,7 @@ def _check_problem_size_and_warn(n: int, nprocs: int) -> None:
 
 def _build_launcher_command(launcher: str, nprocs: int, executable: str) -> list[str]:
     if launcher == "srun":
-        return [launcher, "-n", str(nprocs), executable]
+        return [launcher, "-n", str(nprocs), "--cpu-bind=none", executable]
     if launcher == "mpirun":
         return [launcher, "--bind-to", "none", "--map-by", "slot", "-np", str(nprocs), executable]
     if launcher in {"local", "none"}:
@@ -284,7 +285,17 @@ def _run_prepared_fit(
     if verbose:
         print(f"[native-fit] workdir: {prepared.workdir}", flush=True)
         print(f"[native-fit] command: {' '.join(prepared.command)}", flush=True)
-    completed = subprocess.run(prepared.command, check=False, capture_output=True, text=True)
+
+    # Scrub inherited SLURM_CPU_BIND* environment variables to avoid conflicts
+    # with our explicit --cpu-bind=none flag
+    env = os.environ.copy()
+    for key in list(env.keys()):
+        if key.startswith("SLURM_CPU_BIND"):
+            del env[key]
+
+    completed = subprocess.run(
+        prepared.command, check=False, capture_output=True, text=True, env=env
+    )
     if verbose:
         print(f"[native-fit] launcher return code: {completed.returncode}", flush=True)
         if completed.stdout:
