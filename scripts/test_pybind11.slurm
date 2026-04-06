@@ -26,10 +26,12 @@ echo ""
 echo "Activating environment (Spack + Python)..."
 source scripts/activate_env.sh --auto
 
-# Rebuild native code with PyBind11
+# Rebuild native code with PyBind11 (per-job build dir to avoid corruption)
 echo ""
 echo "Rebuilding native code with PyBind11..."
-make native-build
+make native-build \
+    BUILD_DIR="native/build-$SLURM_JOB_ID" \
+    ENABLE_PYBIND11=ON
 
 # Check if module loaded
 echo ""

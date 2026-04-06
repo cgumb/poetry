@@ -9,11 +9,15 @@ Tests three modes:
 """
 from __future__ import annotations
 
+import os
 import numpy as np
 from pathlib import Path
 
 from poetry_gp.backends.scalapack_fit import fit_exact_gp_scalapack_from_rated
 from poetry_gp.gp_exact import predict_block
+
+# Allow override via environment variable (for per-job builds in Slurm)
+SCALAPACK_EXECUTABLE = os.environ.get("SCALAPACK_EXECUTABLE", "native/build/scalapack_gp_fit")
 
 
 def test_fit_only() -> None:
@@ -40,6 +44,7 @@ def test_fit_only() -> None:
         noise=1e-3,
         launcher="srun",
         nprocs=4,
+        executable=SCALAPACK_EXECUTABLE,
         block_size=128,
         return_alpha=True,
         return_chol=False,  # ← Skip Cholesky gathering
@@ -85,6 +90,7 @@ def test_mean_only() -> None:
         noise=1e-3,
         launcher="srun",
         nprocs=4,
+        executable=SCALAPACK_EXECUTABLE,
         block_size=128,
         return_alpha=True,
         return_chol=False,  # ← Skip Cholesky gathering
@@ -143,6 +149,7 @@ def test_full_variance() -> None:
         noise=1e-3,
         launcher="srun",
         nprocs=4,
+        executable=SCALAPACK_EXECUTABLE,
         block_size=128,
         return_alpha=True,
         return_chol=True,  # ← Gather Cholesky

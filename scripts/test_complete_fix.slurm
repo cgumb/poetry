@@ -26,10 +26,12 @@ echo ""
 echo "Activating environment (Spack + Python)..."
 source scripts/activate_env.sh --auto
 
-# Rebuild native code with fixes
+# Rebuild native code with fixes (per-job build dir to avoid corruption)
 echo ""
 echo "Rebuilding native code..."
-make native-build
+make native-build \
+    BUILD_DIR="native/build-$SLURM_JOB_ID" \
+    ENABLE_PYBIND11=OFF
 
 if [ $? -ne 0 ]; then
     echo "✗ Build failed! Check errors above."
@@ -38,6 +40,9 @@ fi
 
 echo "✓ Build succeeded"
 echo ""
+
+# Set executable path for tests
+SCALAPACK_EXECUTABLE="native/build-$SLURM_JOB_ID/scalapack_gp_fit"
 
 # Test 1: No placeholder files or allocations
 echo ""
@@ -98,6 +103,7 @@ result = run_blocked_step(
     score_backend='none',  # Triggers return_chol=False
     scalapack_launcher='srun',
     scalapack_nprocs=4,
+    scalapack_executable='$SCALAPACK_EXECUTABLE',
     scalapack_block_size=128,
 )
 elapsed = time.perf_counter() - t0
@@ -130,6 +136,7 @@ result = run_blocked_step(
     compute_variance=True,
     scalapack_launcher='srun',
     scalapack_nprocs=4,
+    scalapack_executable='$SCALAPACK_EXECUTABLE',
     scalapack_block_size=128,
 )
 elapsed = time.perf_counter() - t0

@@ -26,10 +26,15 @@ echo ""
 echo "Activating environment (Spack + Python)..."
 source scripts/activate_env.sh --auto
 
-# Rebuild native code with new flags
+# Rebuild native code with new flags (per-job build dir to avoid corruption)
 echo ""
 echo "Rebuilding native code..."
-make native-build
+make native-build \
+    BUILD_DIR="native/build-$SLURM_JOB_ID" \
+    ENABLE_PYBIND11=OFF
+
+# Set executable path for tests
+export SCALAPACK_EXECUTABLE="native/build-$SLURM_JOB_ID/scalapack_gp_fit"
 
 # Run test script
 echo ""
