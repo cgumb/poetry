@@ -22,7 +22,12 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "========================================"
 echo ""
 
+# Activate environment (provides BLAS for build)
+echo "Activating environment (Spack + Python)..."
+source scripts/activate_env.sh --auto
+
 # Rebuild native code with fixes
+echo ""
 echo "Rebuilding native code..."
 make native-build
 
@@ -33,10 +38,6 @@ fi
 
 echo "✓ Build succeeded"
 echo ""
-
-# Activate Python environment
-echo "Activating Python environment..."
-source scripts/activate_env.sh --auto
 
 # Test 1: No placeholder files or allocations
 echo ""

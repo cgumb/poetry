@@ -22,13 +22,14 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "========================================"
 echo ""
 
+# Activate environment (provides BLAS for build)
+echo "Activating environment (Spack + Python)..."
+source scripts/activate_env.sh --auto
+
 # Rebuild native code with PyBind11
+echo ""
 echo "Rebuilding native code with PyBind11..."
 make native-build
-
-# Activate Python environment
-echo "Activating Python environment..."
-source scripts/activate_env.sh --auto
 
 # Check if module loaded
 echo ""
