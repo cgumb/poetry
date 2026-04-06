@@ -230,8 +230,9 @@ py::dict fit_gp_lapack(
     py::dict result;
 
     // Copy alpha to Python-owned array
-    // Use default constructor which creates proper contiguous array
-    auto alpha_py = py::array_t<double>(m);
+    // CRITICAL: Must pass shape as std::vector or initializer list, not raw int
+    // py::array_t<double>(int) creates array with stride=0!
+    auto alpha_py = py::array_t<double>(std::vector<ssize_t>{m});
     double* alpha_out = alpha_py.mutable_data();
     std::memcpy(alpha_out, alpha.data(), m * sizeof(double));
 
