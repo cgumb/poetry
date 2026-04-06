@@ -136,9 +136,16 @@ py::dict fit_gp_lapack(
 
     int m = static_cast<int>(K_rr_buf.shape[0]);
 
-    // Copy input (LAPACK modifies in-place)
+    // Convert K_rr from C-order (row-major) to Fortran-order (column-major) for LAPACK
+    // C-order: K[i,j] at position i*m + j
+    // Fortran-order: K[i,j] at position j*m + i
+    const double* K_rr = static_cast<const double*>(K_rr_buf.ptr);
     std::vector<double> chol(m * m);
-    std::memcpy(chol.data(), K_rr_buf.ptr, m * m * sizeof(double));
+    for (int i = 0; i < m; ++i) {
+        for (int j = 0; j < m; ++j) {
+            chol[j * m + i] = K_rr[i * m + j];  // Transpose: row->col, col->row
+        }
+    }
 
     std::vector<double> alpha(m);
     std::memcpy(alpha.data(), y_buf.ptr, m * sizeof(double));
@@ -193,23 +200,23 @@ py::dict fit_gp_lapack(
 
     if (return_chol) {
         // Zero out upper triangle (LAPACK only fills lower)
+        // In column-major: element (i,j) is at j*m + i
         for (int i = 0; i < m; ++i) {
             for (int j = i + 1; j < m; ++j) {
-                chol[i * m + j] = 0.0;
+                chol[j * m + i] = 0.0;  // Column-major indexing
             }
         }
 
-        // Copy chol to Python-owned Fortran-order array for LAPACK compatibility
-        // LAPACK stores column-major, so create array with proper strides
+        // Copy chol to Python-owned Fortran-order array
+        // chol is already in column-major (Fortran) format
         auto chol_py = py::array_t<double>(
-            {m, m},                           // shape
-            {sizeof(double), m * sizeof(double)}  // strides: column-major (Fortran order)
+            {m, m},                                    // shape
+            {sizeof(double), m * sizeof(double)}      // strides: column-major
         );
         auto chol_buf = chol_py.mutable_unchecked<2>();
-        // chol is row-major (C-order), need to copy correctly
         for (int i = 0; i < m; ++i) {
             for (int j = 0; j < m; ++j) {
-                chol_buf(i, j) = chol[i * m + j];
+                chol_buf(i, j) = chol[j * m + i];  // Read from column-major storage
             }
         }
         result["chol_lower"] = chol_py;
