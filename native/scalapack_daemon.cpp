@@ -720,23 +720,6 @@ int main(int argc, char** argv) {
 
             fprintf(stderr, "[Daemon] Fit complete: fit_time=%.4fs, total_time=%.4fs\n",
                     fit_time, total_time);
-#else
-            fprintf(stderr, "[Daemon] ERROR: Built without ScaLAPACK support\n");
-            DaemonResponse resp;
-            resp.status = 1;
-            resp.message = "Daemon built without ScaLAPACK support";
-            resp.log_marginal_likelihood = 0.0;
-            resp.fit_seconds = 0.0;
-            resp.total_seconds = 0.0;
-
-            int resp_fd = open(response_pipe, O_WRONLY);
-            if (resp_fd >= 0) {
-                std::string resp_json = create_response_json(resp);
-                write(resp_fd, resp_json.c_str(), resp_json.length());
-                close(resp_fd);
-            }
-            continue;
-#endif
 
             // Write outputs (only rank 0 has the results)
             if (!write_binary_file(req.alpha_out_path, result.alpha.data(), req.m)) {
@@ -763,6 +746,23 @@ int main(int argc, char** argv) {
             } else {
                 fprintf(stderr, "[Daemon] Failed to open response pipe: %s\n", strerror(errno));
             }
+#else
+            fprintf(stderr, "[Daemon] ERROR: Built without ScaLAPACK support\n");
+            DaemonResponse resp;
+            resp.status = 1;
+            resp.message = "Daemon built without ScaLAPACK support";
+            resp.log_marginal_likelihood = 0.0;
+            resp.fit_seconds = 0.0;
+            resp.total_seconds = 0.0;
+
+            int resp_fd = open(response_pipe, O_WRONLY);
+            if (resp_fd >= 0) {
+                std::string resp_json = create_response_json(resp);
+                write(resp_fd, resp_json.c_str(), resp_json.length());
+                close(resp_fd);
+            }
+            continue;
+#endif
 
         } else {
             // Non-root ranks: receive operation code and participate
