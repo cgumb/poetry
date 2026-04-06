@@ -176,9 +176,17 @@ py::dict fit_gp_lapack(
         );
     }
 
-    // Build result dictionary
+    // Build result dictionary with Python-owned arrays
     py::dict result;
-    result["alpha"] = py::array_t<double>(m, alpha.data());
+
+    // Copy alpha to Python-owned array
+    auto alpha_py = py::array_t<double>(m);
+    auto alpha_buf = alpha_py.mutable_unchecked<1>();
+    for (int i = 0; i < m; ++i) {
+        alpha_buf(i) = alpha[i];
+    }
+    result["alpha"] = alpha_py;
+
     result["logdet"] = logdet;
     result["info_potrf"] = info_potrf;
     result["info_potrs"] = info_potrs;
@@ -190,7 +198,21 @@ py::dict fit_gp_lapack(
                 chol[i * m + j] = 0.0;
             }
         }
-        result["chol_lower"] = py::array_t<double>({m, m}, chol.data());
+
+        // Copy chol to Python-owned Fortran-order array for LAPACK compatibility
+        // LAPACK stores column-major, so create array with proper strides
+        auto chol_py = py::array_t<double>(
+            {m, m},                           // shape
+            {sizeof(double), m * sizeof(double)}  // strides: column-major (Fortran order)
+        );
+        auto chol_buf = chol_py.mutable_unchecked<2>();
+        // chol is row-major (C-order), need to copy correctly
+        for (int i = 0; i < m; ++i) {
+            for (int j = 0; j < m; ++j) {
+                chol_buf(i, j) = chol[i * m + j];
+            }
+        }
+        result["chol_lower"] = chol_py;
     }
 
     return result;
@@ -222,7 +244,7 @@ py::dict predict_gp_lapack(
     py::array_t<double, py::array::c_style | py::array::forcecast> x_query_py,
     py::array_t<double, py::array::c_style | py::array::forcecast> x_rated_py,
     py::array_t<double, py::array::c_style | py::array::forcecast> alpha_py,
-    py::array_t<double, py::array::c_style | py::array::forcecast> chol_lower_py,
+    py::array_t<double> chol_lower_py,  // Accept any order (will be Fortran from fit)
     double length_scale,
     double variance,
     bool compute_variance = true
@@ -256,8 +278,15 @@ py::dict predict_gp_lapack(
         }
     }
 
+    // Copy mean to Python-owned array
+    auto mean_py = py::array_t<double>(n);
+    auto mean_buf = mean_py.mutable_unchecked<1>();
+    for (int i = 0; i < n; ++i) {
+        mean_buf(i) = mean[i];
+    }
+
     py::dict result;
-    result["mean"] = py::array_t<double>(n, mean.data());
+    result["mean"] = mean_py;
 
     if (!compute_variance) {
         return result;
@@ -304,7 +333,14 @@ py::dict predict_gp_lapack(
         var[i] = std::max(0.0, variance - sum_sq);  // Clamp to non-negative
     }
 
-    result["variance"] = py::array_t<double>(n, var.data());
+    // Copy variance to Python-owned array
+    auto var_py = py::array_t<double>(n);
+    auto var_buf = var_py.mutable_unchecked<1>();
+    for (int i = 0; i < n; ++i) {
+        var_buf(i) = var[i];
+    }
+
+    result["variance"] = var_py;
     return result;
 }
 

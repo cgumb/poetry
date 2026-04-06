@@ -134,7 +134,7 @@ def test_performance_comparison() -> None:
     rng = np.random.default_rng(42)
     m_values = [500, 1000, 2000]
     d = 384
-    n = 1000
+    n = 3000  # Must be >= max(m_values) for sampling without replacement
 
     print(f"Problem sizes: m ∈ {m_values}, n={n}, d={d}")
     print("")
