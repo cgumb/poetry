@@ -33,7 +33,27 @@ source scripts/activate_env.sh              # CPU
 source scripts/activate_env.sh --gpu        # GPU (if on GPU node)
 ```
 
-## Step 3: Launch CLI
+## Step 3: Configure Visualization URLs (Optional)
+
+To enable clickable links that open directly in Open OnDemand:
+
+```bash
+# Copy example config
+cp .env.example .env
+
+# Edit .env and set:
+export VIZ_URL_PREFIX=https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs
+
+# Source it before running CLI
+source .env
+```
+
+Or set inline when launching:
+```bash
+VIZ_URL_PREFIX=https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs python scripts/app/interactive_cli.py
+```
+
+## Step 4: Launch CLI
 
 **Basic usage**:
 ```bash
@@ -46,10 +66,11 @@ The CLI automatically enables visualization if `data/proj2d.npy` exists (created
 ```bash
 python scripts/app/interactive_cli.py \
   --coords-2d /path/to/proj2d.npy \
-  --viz-output-dir custom_viz_dir
+  --viz-output-dir custom_viz_dir \
+  --viz-url-prefix https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs
 ```
 
-## Step 4: Build Your Preference Model
+## Step 5: Build Your Preference Model
 
 **Commands**:
 - `l` - **Like** current poem (+1.0)
@@ -70,7 +91,7 @@ python scripts/app/interactive_cli.py \
 3. **Exploitation** (`e`): Get recommendations (tests learned preferences)
 4. **Visualize** (`v`): Create posterior heatmap (after 20+ ratings)
 
-## Step 5: Visualize Your Preferences
+## Step 6: Visualize Your Preferences
 
 After rating 5+ poems, use the `v` command to generate posterior heatmaps:
 
@@ -84,7 +105,9 @@ data/viz/latest_posterior_mean.png       # Predicted ratings
 data/viz/latest_posterior_variance.png   # Uncertainty map
 ```
 
-The CLI will display **clickable file:// links** (in supported terminals) for easy viewing!
+The CLI displays **clickable links** for easy viewing:
+- With `VIZ_URL_PREFIX` set: Opens directly in browser via Open OnDemand
+- Without it: Shows `file://` links (works in some terminals)
 
 **Visualization shows**:
 - **Heatmap**: Smoothed posterior over 2D poem space (UMAP projection)
@@ -139,8 +162,8 @@ scp <user>@<cluster>:poetry/data/viz/latest_*.png .
 # Visualize (after ~5+ ratings)
 > v
 ✓ Visualization complete!
-  📊 Posterior mean:     file:///.../data/viz/latest_posterior_mean.png
-  📊 Posterior variance: file:///.../data/viz/latest_posterior_variance.png
+  📊 Posterior mean:     https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs//home/user/poetry/data/viz/latest_posterior_mean.png
+  📊 Posterior variance: https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs//home/user/poetry/data/viz/latest_posterior_variance.png
 
 # View rated poems
 > r

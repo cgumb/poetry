@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from dataclasses import dataclass, asdict
 
@@ -61,6 +62,23 @@ def pick_column(columns: list[str], candidates: list[str], fallback: str) -> str
     return fallback
 
 
+def make_clickable_url(file_path: Path, url_prefix: str | None) -> str:
+    """Convert a file path to a clickable URL.
+
+    If url_prefix is provided, creates an OOD-style URL.
+    Otherwise creates a file:// URL.
+    """
+    abs_path = file_path.resolve()
+
+    if url_prefix:
+        # OOD URL: prefix + absolute_path
+        # e.g., https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs//home/user/poetry/data/viz/file.png
+        return f"{url_prefix}/{abs_path}"
+    else:
+        # Standard file:// URL
+        return f"file://{abs_path}"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--poems", type=Path, default=Path("data/poems.parquet"))
@@ -96,6 +114,9 @@ def parse_args() -> argparse.Namespace:
                         help="Path to poet centroids metadata (.parquet) for overlay")
     parser.add_argument("--poet-coords", type=Path, default=Path("data/poet_centroids_2d.npy"),
                         help="Path to poet centroid coordinates (.npy) for overlay")
+    parser.add_argument("--viz-url-prefix", type=str, default=None,
+                        help="URL prefix for visualization links (e.g., 'https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs'). "
+                        "If not provided, checks environment variable VIZ_URL_PREFIX, falls back to file:// URLs")
     return parser.parse_args()
 
 
@@ -619,14 +640,17 @@ def main() -> None:
                         noise=current_noise,
                     )
 
-                # Display results with clickable links (file:// URLs)
+                # Display results with clickable links
+                # Check for URL prefix: CLI arg > env var > file:// fallback
+                url_prefix = args.viz_url_prefix or os.getenv("VIZ_URL_PREFIX")
+
                 console.print("\n[green]✓ Visualization complete![/green]\n")
 
-                mean_plot_abs = viz_result.outputs.latest_mean_plot.resolve()
-                var_plot_abs = viz_result.outputs.latest_variance_plot.resolve()
+                mean_url = make_clickable_url(viz_result.outputs.latest_mean_plot, url_prefix)
+                var_url = make_clickable_url(viz_result.outputs.latest_variance_plot, url_prefix)
 
-                console.print(f"  📊 Posterior mean:     [link=file://{mean_plot_abs}]{mean_plot_abs}[/link]")
-                console.print(f"  📊 Posterior variance: [link=file://{var_plot_abs}]{var_plot_abs}[/link]")
+                console.print(f"  📊 Posterior mean:     [link={mean_url}]{mean_url}[/link]")
+                console.print(f"  📊 Posterior variance: [link={var_url}]{var_url}[/link]")
                 console.print()
                 continue
 

@@ -1,6 +1,9 @@
 *.pyc
 __pycache__/
 
+# Environment configuration
+.env
+
 # Data files
 data/
 results/
