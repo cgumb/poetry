@@ -32,7 +32,7 @@ bash scripts/setup_shared_data.sh
 
 # Verify setup
 python -c "import poetry_gp; print('✓ poetry_gp installed')"
-ls -lh data/shared/
+ls -lh data/  # Should see symlinks to poems.parquet, embeddings.npy, etc.
 ls -lh native/build/release/scalapack_gp_fit
 ```
 
