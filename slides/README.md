@@ -65,12 +65,17 @@ A pre-commit hook ensures the PDF is rebuilt whenever `presentation.md` changes:
 - Stages the updated PDF
 - Prevents stale PDFs from being committed
 
+**Install the hook** (if cloning fresh):
+```bash
+bash scripts/install_git_hook.sh
+```
+
 **To bypass** (not recommended):
 ```bash
 git commit --no-verify
 ```
 
-**How it works**: See `.git/hooks/pre-commit`
+**How it works**: See `scripts/pre-commit-hook.sh`
 
 ## Building Slides
 
