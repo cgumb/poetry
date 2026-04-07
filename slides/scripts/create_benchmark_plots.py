@@ -221,7 +221,7 @@ def main():
     print("Creating plots...")
 
     # Create output directory
-    output_dir = Path('.')
+    output_dir = Path('../figures')
     output_dir.mkdir(exist_ok=True)
 
     # Generate plots

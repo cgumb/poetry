@@ -74,12 +74,12 @@ def main():
     plt.tight_layout()
 
     # Save
-    output_path = 'gp_1d_example.png'
+    output_path = '../figures/gp_1d_example.png'
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     print(f"✓ Saved to {output_path}")
 
     # Also save PDF for slides
-    output_pdf = 'gp_1d_example.pdf'
+    output_pdf = '../figures/gp_1d_example.pdf'
     plt.savefig(output_pdf, bbox_inches='tight')
     print(f"✓ Saved to {output_pdf}")
 

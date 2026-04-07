@@ -136,7 +136,7 @@ where $(K_{rr})_{ij} = k(x_i, x_j)$
 
 # 1D GP Example
 
-![](gp_1d_example.pdf){width=90%}
+![](figures/gp_1d_example.pdf){width=90%}
 
 **Observations**: Sparse rated points (red dots)
 
@@ -326,7 +326,7 @@ dtrsv_(...);  // Triangular solve
 
 # Benchmark: Fit Scaling (Visual)
 
-![](benchmark_fit_scaling.pdf){width=90%}
+![](figures/benchmark_fit_scaling.pdf){width=90%}
 
 **Observations**: Python fast for small $m$, ScaLAPACK wins at large $m$, 8 processes optimal
 
@@ -351,7 +351,7 @@ dtrsv_(...);  // Triangular solve
 
 # Benchmark: Speedup (Visual)
 
-![](benchmark_speedup.pdf){width=90%}
+![](figures/benchmark_speedup.pdf){width=90%}
 
 **Crossover at $m \approx 5{,}000$**: Below = overhead dominates, above = parallelism wins
 
@@ -378,7 +378,7 @@ dtrsv_(...);  // Triangular solve
 
 # Benchmark: Process Scaling (Visual)
 
-![](benchmark_process_scaling.pdf){width=90%}
+![](figures/benchmark_process_scaling.pdf){width=90%}
 
 **Amdahl's law in action**: 8 processes optimal, 16 shows diminishing returns
 
