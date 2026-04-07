@@ -65,7 +65,7 @@ Rate poem → Update posterior → Score candidates → Choose next poem
 $$y = X\beta + \varepsilon, \qquad \varepsilon \sim \mathcal{N}(0, \sigma_n^2 I)$$
 
 **Gaussian prior** (ridge penalty):
-$$\beta \sim \mathcal{N}(0, \tau^2 I)$$
+$$\beta \sim \mathcal{N}(0, \lambda^{-1} I)$$
 
 **MAP estimate**:
 $$\hat{\beta} = (X^\top X + \lambda I_p)^{-1} X^\top y$$
@@ -92,23 +92,7 @@ $$\hat{y}_* = k_*^\top (K + \lambda I)^{-1} y$$
 
 **When $m < p$**: Dual is cheaper
 
----
-
-# From Inner Products to Kernels
-
-**Linear kernel**:
-$$K_{ij} = x_i^\top x_j$$
-
-**Replace with general kernel**:
-$$K_{ij} = k(x_i, x_j)$$
-
-**RBF kernel** (our choice):
-$$k(x, x') = \sigma_f^2 \exp\left(-\frac{\|x - x'\|^2}{2\ell^2}\right)$$
-
-**Prediction with kernel**:
-$$\hat{y}_* = k_*^\top (K + \lambda I)^{-1} y$$
-
-**Interpretation**: RBF → nearby poems have similar ratings
+**Replace linear kernel with RBF**: $k(x,x') = \sigma_f^2 \exp(-\|x-x'\|^2/2\ell^2)$
 
 ---
 
@@ -480,7 +464,7 @@ dtrsv_(...);  // Triangular solve
 
 # Posterior Visualization
 
-![](figures/posterior_heatmap_real.png){width=70%}
+![](figures/posterior_heatmap_real.png){width=60%}
 
 GP posterior mean on 2D UMAP projection of poem embeddings
 
@@ -490,29 +474,31 @@ GP posterior mean on 2D UMAP projection of poem embeddings
 
 # Try It Yourself!
 
-**Quick start**:
-
 ```bash
-# 1. Setup environment
-bash scripts/bootstrap_env.sh
-source scripts/activate_env.sh
+# 1. Clone repository
+git clone https://github.com/cgumb/poetry.git && cd poetry
 
-# 2. Get shared data (or build from scratch)
+# 2. Get interactive node (90 minutes)
+srun --pty -p general -N1 -n8 -t 90 bash     # CPU node
+srun --pty -p gpu -N1 --gres=gpu:1 -t 90 bash  # GPU node
+
+# 3. Bootstrap environment
+bash scripts/bootstrap_venv.sh              # CPU
+bash scripts/bootstrap_venv.sh --gpu        # GPU
+source scripts/activate_env.sh              # CPU
+source scripts/activate_env.sh --gpu        # GPU
+
+# 4. Build native code (CPU only)
+make native-build
+
+# 5. Get shared data
 bash scripts/setup_shared_data.sh
 
-# 3. Run interactive CLI
+# 6. Run interactive CLI
 python scripts/app/interactive_cli.py
 ```
 
-**Features**:
-- Rate poems → GP updates in real-time
-- Exploit (`e`): Get recommendations (UCB, Thompson)
-- Explore (`x`): Ask informative questions (max_variance)
-- Visualize: Posterior heatmaps
-
-**Repository**: `github.com/cgumb/poetry` (or share link)
-
-**Questions?**
+**Repository**: `https://github.com/cgumb/poetry` | **Questions?**
 
 ---
 
