@@ -70,6 +70,10 @@ def parse_llm_result(result_line: str) -> tuple[int | None, dict]:
 
     # Parse the JSON from the text content
     text_content = content_blocks[0].get("text", "")
+
+    # Fix curly quotes that break JSON parsing
+    text_content = text_content.replace('"', '"').replace('"', '"')
+
     try:
         parsed = json.loads(text_content)
         return poem_idx, parsed
@@ -129,6 +133,12 @@ def apply_llm_imputations(
             poem_idx, parsed = parse_llm_result(line)
 
             if poem_idx is None:
+                stats["parse_errors"] += 1
+                continue
+
+            # Handle case where parsed is None or not a dict
+            if parsed is None or not isinstance(parsed, dict):
+                print(f"Warning: Poem {poem_idx}: Invalid parse result")
                 stats["parse_errors"] += 1
                 continue
 
