@@ -8,6 +8,9 @@ from dataclasses import dataclass, asdict
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
+import matplotlib.pyplot as plt
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -15,10 +18,10 @@ from rich.text import Text
 from rich.prompt import Prompt, Confirm
 from rich import box
 
-from poetry_gp.backends.blocked import run_blocked_step
+from poetry_gp.backends.blocked import run_blocked_step, BlockedStepResult
 from poetry_gp.backends.scoring import try_create_daemon_client
 from poetry_gp.backends.gpu_scoring import is_gpu_available
-from poetry_gp.session_viz import render_session_gp_outputs
+from poetry_gp.canonical_poets import is_canonical
 
 console = Console()
 
@@ -77,6 +80,160 @@ def make_clickable_url(file_path: Path, url_prefix: str | None) -> str:
     else:
         # Standard file:// URL
         return f"file://{abs_path}"
+
+
+def load_poet_overlay(poets_path: Path | None, coords_path: Path | None) -> tuple[pd.DataFrame | None, np.ndarray | None]:
+    """Load poet centroids and coordinates for overlay."""
+    if poets_path is None or coords_path is None:
+        return None, None
+    if not poets_path.exists() or not coords_path.exists():
+        return None, None
+    try:
+        poets = pd.read_parquet(poets_path)
+        coords = np.load(coords_path, mmap_mode="r")
+        if len(poets) != coords.shape[0]:
+            return None, None
+        return poets, coords
+    except Exception:
+        return None, None
+
+
+def draw_poet_overlay(ax: plt.Axes, poets: pd.DataFrame | None, poet_coords: np.ndarray | None, *, topn: int = 80, label_topn: int = 10) -> None:
+    """Draw poet overlay with hybrid selection: canonical poets prioritized, then by poem count."""
+    if poets is None or poet_coords is None or len(poets) == 0:
+        return
+
+    # Hybrid selection: prioritize canonical poets, then high-count poets
+    poets_work = poets.copy()
+    poets_work["is_canonical"] = poets_work["poet"].map(is_canonical)
+
+    # Split into canonical and non-canonical
+    canonical_mask = poets_work["is_canonical"].to_numpy()
+    canonical_indices = np.flatnonzero(canonical_mask)
+    non_canonical_indices = np.flatnonzero(~canonical_mask)
+
+    # Sort both groups by poem count (descending)
+    if "n_poems" in poets_work.columns:
+        n_poems = poets_work["n_poems"].to_numpy()
+        canonical_order = canonical_indices[np.argsort(-n_poems[canonical_indices], kind="stable")]
+        non_canonical_order = non_canonical_indices[np.argsort(-n_poems[non_canonical_indices], kind="stable")]
+    else:
+        canonical_order = canonical_indices
+        non_canonical_order = non_canonical_indices
+
+    # Take all canonical poets (up to topn), then fill with high-count non-canonical
+    order = np.concatenate([canonical_order, non_canonical_order])
+    order = order[: min(topn, len(order))]
+
+    poets_sub = poets.iloc[order].reset_index(drop=True)
+    coords_sub = np.asarray(poet_coords[order])
+
+    # Mark which are canonical for sizing
+    is_canonical_selected = np.array([is_canonical(p) for p in poets_sub["poet"]])
+
+    if "n_poems" in poets_sub.columns:
+        sizes = 20 + 8 * np.sqrt(poets_sub["n_poems"].to_numpy())
+        # Boost size for canonical poets
+        sizes = np.where(is_canonical_selected, sizes * 1.3, sizes)
+    else:
+        sizes = np.where(is_canonical_selected, 40.0, 30.0)
+
+    # Less prominent poet markers to reduce clutter
+    # Use different colors for canonical vs non-canonical
+    colors = np.where(is_canonical_selected, "darkviolet", "purple")
+    alphas = np.where(is_canonical_selected, 0.4, 0.2)
+
+    for i, (color, alpha, size) in enumerate(zip(colors, alphas, sizes)):
+        ax.scatter(
+            coords_sub[i, 0], coords_sub[i, 1],
+            s=size, alpha=alpha, marker="^",
+            c=color, edgecolors="none"
+        )
+
+    # Label canonical poets first
+    n_canonical_to_label = min(sum(is_canonical_selected), label_topn)
+    canonical_label_indices = np.flatnonzero(is_canonical_selected)[:n_canonical_to_label]
+    remaining_labels = label_topn - len(canonical_label_indices)
+
+    label_indices_set = set(canonical_label_indices)
+    if remaining_labels > 0:
+        non_canonical_label_indices = np.flatnonzero(~is_canonical_selected)[:remaining_labels]
+        label_indices_set.update(non_canonical_label_indices)
+
+    for i in sorted(label_indices_set):
+        style_weight = "normal" if is_canonical_selected[i] else "italic"
+        ax.text(
+            coords_sub[i, 0], coords_sub[i, 1],
+            str(poets_sub.iloc[i]["poet"]),
+            fontsize=7, alpha=0.7 if is_canonical_selected[i] else 0.5,
+            style=style_weight
+        )
+
+
+def render_hexbin_plot(
+    coords_2d: np.ndarray,
+    values: np.ndarray,
+    rated_indices: list[int],
+    current_index: int | None,
+    exploit_index: int,
+    explore_index: int,
+    output_path: Path,
+    *,
+    title: str,
+    poets: pd.DataFrame | None = None,
+    poet_coords: np.ndarray | None = None,
+) -> None:
+    """Render hexbin plot of posterior values."""
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    # Choose colormap: diverging for mean (around 0), sequential for variance
+    is_variance_plot = "variance" in title.lower()
+    cmap = "YlOrRd" if is_variance_plot else "RdBu_r"
+
+    hb = ax.hexbin(
+        coords_2d[:, 0], coords_2d[:, 1],
+        C=values, reduce_C_function=np.mean,
+        gridsize=60, mincnt=1, cmap=cmap, alpha=0.8
+    )
+    fig.colorbar(hb, ax=ax, fraction=0.046, pad=0.04)
+
+    # Plot key points with distinct colors and markers
+    if rated_indices:
+        rated = np.asarray(rated_indices, dtype=np.int64)
+        ax.scatter(
+            coords_2d[rated, 0], coords_2d[rated, 1],
+            s=40, alpha=0.85, c="black", marker="o",
+            edgecolors="white", linewidths=0.5, label="rated"
+        )
+    if current_index is not None and 0 <= current_index < len(coords_2d):
+        ax.scatter(
+            coords_2d[current_index, 0], coords_2d[current_index, 1],
+            s=120, c="cyan", marker="X", edgecolors="black",
+            linewidths=1.2, alpha=0.95, label="current"
+        )
+    ax.scatter(
+        coords_2d[exploit_index, 0], coords_2d[exploit_index, 1],
+        s=180, c="lime", marker="*", edgecolors="darkgreen",
+        linewidths=1.5, alpha=0.95, label="exploit"
+    )
+    ax.scatter(
+        coords_2d[explore_index, 0], coords_2d[explore_index, 1],
+        s=120, c="gold", marker="s", edgecolors="darkorange",
+        linewidths=1.5, alpha=0.95, label="explore"
+    )
+
+    draw_poet_overlay(ax, poets, poet_coords, topn=80, label_topn=10)
+
+    ax.set_title(title)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    handles, _labels = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(loc="best")
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
 
 
 def parse_args() -> argparse.Namespace:
@@ -595,15 +752,15 @@ def main() -> None:
                 continue
 
             if cmd == "v":
-                # Visualize posterior heatmaps
+                # Visualize posterior hexbin plots
                 if coords_2d is None:
-                    console.print("[yellow]Visualization requires --coords-2d argument[/yellow]")
+                    console.print("[yellow]Visualization requires 2D projection data (data/proj2d.npy)[/yellow]")
                     continue
                 if not rated_indices:
                     console.print("[yellow]Rate at least one poem first.[/yellow]")
                     continue
 
-                with console.status("[bold cyan]Generating posterior heatmaps...", spinner="dots"):
+                with console.status("[bold cyan]Generating posterior hexbin plots...", spinner="dots"):
                     # Compute GP posterior first
                     result = run_blocked_step(
                         embeddings,
@@ -623,22 +780,45 @@ def main() -> None:
                         daemon_launcher=args.daemon_launcher,
                     )
 
-                    # Render heatmaps
-                    viz_result = render_session_gp_outputs(
-                        poems=poems,
-                        embeddings=embeddings,
-                        coords_2d=coords_2d,
-                        rated_indices=rated_indices,
-                        ratings=ratings,
-                        output_dir=args.viz_output_dir,
-                        current_index=current_idx,
-                        precomputed_result=result,
-                        poets_path=args.poets_metadata,
-                        poet_coords_path=args.poet_coords,
-                        length_scale=current_length_scale,
-                        variance=current_variance,
-                        noise=current_noise,
-                    )
+                    # Load poet overlay data
+                    poets, poet_coords = load_poet_overlay(args.poets_metadata, args.poet_coords)
+
+                    # Render hexbin plots
+                    args.viz_output_dir.mkdir(parents=True, exist_ok=True)
+                    step_tag = f"step_{len(rated_indices):03d}"
+
+                    step_mean_plot = args.viz_output_dir / f"{step_tag}_posterior_mean_hexbin.png"
+                    latest_mean_plot = args.viz_output_dir / "latest_posterior_mean_hexbin.png"
+                    step_variance_plot = args.viz_output_dir / f"{step_tag}_posterior_variance_hexbin.png"
+                    latest_variance_plot = args.viz_output_dir / "latest_posterior_variance_hexbin.png"
+
+                    for target in [step_mean_plot, latest_mean_plot]:
+                        render_hexbin_plot(
+                            coords_2d,
+                            result.mean,
+                            rated_indices,
+                            current_idx,
+                            result.exploit_index,
+                            result.explore_index,
+                            target,
+                            title="Posterior mean over projected poem space (hexbin)",
+                            poets=poets,
+                            poet_coords=poet_coords,
+                        )
+
+                    for target in [step_variance_plot, latest_variance_plot]:
+                        render_hexbin_plot(
+                            coords_2d,
+                            result.variance,
+                            rated_indices,
+                            current_idx,
+                            result.exploit_index,
+                            result.explore_index,
+                            target,
+                            title="Posterior variance over projected poem space (hexbin)",
+                            poets=poets,
+                            poet_coords=poet_coords,
+                        )
 
                 # Display results with clickable links
                 # Check for URL prefix: CLI arg > env var > file:// fallback
@@ -646,8 +826,8 @@ def main() -> None:
 
                 console.print("\n[green]✓ Visualization complete![/green]\n")
 
-                mean_url = make_clickable_url(viz_result.outputs.latest_mean_plot, url_prefix)
-                var_url = make_clickable_url(viz_result.outputs.latest_variance_plot, url_prefix)
+                mean_url = make_clickable_url(latest_mean_plot, url_prefix)
+                var_url = make_clickable_url(latest_variance_plot, url_prefix)
 
                 console.print(f"  📊 Posterior mean:     [link={mean_url}]{mean_url}[/link]")
                 console.print(f"  📊 Posterior variance: [link={var_url}]{var_url}[/link]")

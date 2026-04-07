@@ -99,10 +99,10 @@ After rating 5+ poems, use the `v` command to generate posterior heatmaps:
 v
 ```
 
-This creates two visualizations in `data/viz/`:
+This creates two hexbin visualizations in `data/viz/`:
 ```
-data/viz/latest_posterior_mean.png       # Predicted ratings
-data/viz/latest_posterior_variance.png   # Uncertainty map
+data/viz/latest_posterior_mean_hexbin.png       # Predicted ratings
+data/viz/latest_posterior_variance_hexbin.png   # Uncertainty map
 ```
 
 The CLI displays **clickable links** for easy viewing:
@@ -110,7 +110,9 @@ The CLI displays **clickable links** for easy viewing:
 - Without it: Shows `file://` links (works in some terminals)
 
 **Visualization shows**:
-- **Heatmap**: Smoothed posterior over 2D poem space (UMAP projection)
+- **Hexbins**: Aggregated posterior values over 2D poem space (UMAP projection)
+  - Only shows hexbins where actual poems exist (no interpolation beyond data)
+  - Each hexbin averages the posterior values of poems in that region
 - **Colors**:
   - Mean: Red/blue diverging (red=predicted like, blue=predicted dislike)
   - Variance: Yellow/orange sequential (bright=uncertain, dark=confident)
@@ -162,8 +164,8 @@ scp <user>@<cluster>:poetry/data/viz/latest_*.png .
 # Visualize (after ~5+ ratings)
 > v
 ✓ Visualization complete!
-  📊 Posterior mean:     https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs//home/user/poetry/data/viz/latest_posterior_mean.png
-  📊 Posterior variance: https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs//home/user/poetry/data/viz/latest_posterior_variance.png
+  📊 Posterior mean:     https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs//home/user/poetry/data/viz/latest_posterior_mean_hexbin.png
+  📊 Posterior variance: https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs//home/user/poetry/data/viz/latest_posterior_variance_hexbin.png
 
 # View rated poems
 > r
