@@ -474,17 +474,17 @@ dtrsv_(...);  // Triangular solve
 
 ![](figures/benchmark_score_backends.pdf){width=70%}
 
-**GPU wins for scoring**: 15× faster than single-threaded Python at $m=5{,}000$
+**GPU advantage**: 3-5× faster than single-threaded Python (best at $m=500$: 4.7×)
 
 ---
 
 # Posterior Visualization
 
-![](figures/posterior_heatmap.pdf){width=70%}
+![](figures/posterior_heatmap_real.png){width=70%}
 
 GP posterior mean on 2D UMAP projection of poem embeddings
 
-**White dots**: Rated poems | **Colors**: Predicted preference (cold = low, hot = high)
+**Black dots**: Rated poems | **Triangles**: Poets | **Colors**: Predicted preference
 
 ---
 

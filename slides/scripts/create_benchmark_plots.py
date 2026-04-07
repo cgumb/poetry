@@ -202,26 +202,36 @@ def plot_log_log_scaling(df, output_path):
     print(f"✓ Saved {output_path}")
     plt.close()
 
-def plot_time_breakdown(df, output_path):
-    """Plot time breakdown: fit vs score as function of m."""
+def plot_time_breakdown(score_csv_path, output_path):
+    """Plot time breakdown: fit vs score as function of m using score benchmark data."""
+    if not Path(score_csv_path).exists():
+        print(f"⚠ Score benchmark CSV not found at {score_csv_path}")
+        print("  Using placeholder - run actual benchmark for real data")
+        return
+
+    df = pd.read_csv(score_csv_path)
+
     fig, ax = plt.subplots(figsize=(9, 5))
 
-    # Python baseline - fit times
-    python_df = df[df['fit_backend'] == 'python'].copy()
-    python_fit = python_df.groupby('m_rated')['fit_seconds'].mean()
-    python_score = python_df.groupby('m_rated')['score_seconds'].mean()
+    # Python single-threaded baseline for comparison
+    python_1t = df[(df['score_backend'] == 'python') & (df['num_threads'] == 1)].copy()
 
-    # Plot stacked area for breakdown
-    m_values = sorted(python_fit.index)
-    fit_times = [python_fit[m] for m in m_values]
-    score_times = [python_score[m] for m in m_values]
-    total_times = [fit_times[i] + score_times[i] for i in range(len(m_values))]
+    if len(python_1t) == 0:
+        print(f"⚠ No Python single-threaded data in {score_csv_path}")
+        return
+
+    python_1t = python_1t.groupby('m_rated', as_index=False)[['fit_seconds', 'score_seconds', 'n_candidates']].mean()
+
+    m_values = sorted(python_1t['m_rated'].values)
+    fit_times = python_1t.set_index('m_rated')['fit_seconds'].reindex(m_values).values
+    score_times = python_1t.set_index('m_rated')['score_seconds'].reindex(m_values).values
+    total_times = fit_times + score_times
 
     # Stacked area plot
     ax.fill_between(m_values, 0, fit_times, alpha=0.7, color='C0', label='Fit (O(m³))')
     ax.fill_between(m_values, fit_times, total_times, alpha=0.7, color='C1', label='Score (O(nm²))')
 
-    # Also plot lines for clarity
+    # Lines for clarity
     ax.plot(m_values, fit_times, 'o-', color='C0', linewidth=2, markersize=6)
     ax.plot(m_values, total_times, 's-', color='black', linewidth=2, markersize=6, label='Total')
 
@@ -233,8 +243,9 @@ def plot_time_breakdown(df, output_path):
     ax.set_xlim(left=0)
     ax.set_ylim(bottom=0)
 
-    # Add annotation about score time (note: these benchmarks didn't vary n)
-    ax.text(0.98, 0.02, f'Note: Score time shown for n={python_df["n_poems"].iloc[0]:,}',
+    # Add annotation about candidate count
+    n_cand = int(python_1t['n_candidates'].iloc[0])
+    ax.text(0.98, 0.02, f'Note: Score time shown for n={n_cand:,}',
             transform=ax.transAxes, ha='right', va='bottom', fontsize=9,
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
 
@@ -323,16 +334,31 @@ def main():
     output_dir = Path('../figures')
     output_dir.mkdir(exist_ok=True)
 
-    # Generate plots
+    # Generate plots from fit benchmark data
     plot_fit_scaling(df, output_dir / 'benchmark_fit_scaling.png')
     plot_speedup_analysis(df, output_dir / 'benchmark_speedup.png')
     plot_process_scaling(df, output_dir / 'benchmark_process_scaling.png', m_target=20000)
     plot_log_log_scaling(df, output_dir / 'benchmark_loglog_scaling.png')
-    plot_time_breakdown(df, output_dir / 'benchmark_time_breakdown.png')
 
-    # Generate score backend comparison plot (if data exists)
-    score_csv = Path('../../results/score_backend_comparison.csv')
-    plot_score_backend_comparison(score_csv, output_dir / 'benchmark_score_backends.png')
+    # Generate plots from score benchmark data (if available)
+    # Try both the timestamped and generic filenames
+    score_csv_candidates = [
+        Path('../../results/score_backend_comparison_20260407_152231.csv'),
+        Path('../../results/score_backend_comparison.csv'),
+    ]
+    score_csv = None
+    for candidate in score_csv_candidates:
+        if candidate.exists():
+            score_csv = candidate
+            break
+
+    if score_csv:
+        print(f"\nUsing score benchmark data: {score_csv.name}")
+        plot_time_breakdown(score_csv, output_dir / 'benchmark_time_breakdown.png')
+        plot_score_backend_comparison(score_csv, output_dir / 'benchmark_score_backends.png')
+    else:
+        print("\n⚠ Score benchmark data not found - skipping time breakdown and score backend plots")
+        print("  Run: sbatch scripts/bench_score_backends.slurm")
 
     print()
     print("=" * 60)
