@@ -39,12 +39,13 @@ export OMPI_MCA_hwloc_base_binding_policy=none
 export OMPI_MCA_rmaps_base_mapping_policy=slot
 
 # Use dedicated build directory for this job
+# Skip PyBind11 build since we only need ScaLAPACK executable
 BUILD_DIR="native/build_job_${SLURM_JOB_ID}"
 EXECUTABLE="${BUILD_DIR}/scalapack_gp_fit"
 
 # Rebuild native code (ensure latest routing fix)
 echo "Rebuilding native code in ${BUILD_DIR}..."
-cmake -S native -B "${BUILD_DIR}"
+cmake -S native -B "${BUILD_DIR}" -DPOETRY_ENABLE_PYBIND11=OFF
 cmake --build "${BUILD_DIR}"
 echo ""
 

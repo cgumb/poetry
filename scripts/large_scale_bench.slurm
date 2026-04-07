@@ -39,11 +39,12 @@ export TMPDIR="$HOME/tmp"
 mkdir -p "$TMPDIR"
 
 # Build native code in job-specific directory
+# Skip PyBind11 build since we only need ScaLAPACK executable
 BUILD_DIR="native/build_job_${SLURM_JOB_ID}"
 EXECUTABLE="${BUILD_DIR}/scalapack_gp_fit"
 
 echo "Building native code in ${BUILD_DIR}..."
-cmake -S native -B "${BUILD_DIR}"
+cmake -S native -B "${BUILD_DIR}" -DPOETRY_ENABLE_PYBIND11=OFF
 cmake --build "${BUILD_DIR}"
 echo ""
 

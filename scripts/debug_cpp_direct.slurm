@@ -37,9 +37,9 @@ echo ""
 BUILD_DIR="native/build_job_${SLURM_JOB_ID}"
 EXECUTABLE="${BUILD_DIR}/scalapack_gp_fit"
 
-# Rebuild native code
+# Rebuild native code (skip PyBind11 - only need ScaLAPACK executable)
 echo "Rebuilding native code in ${BUILD_DIR}..."
-cmake -S native -B "${BUILD_DIR}"
+cmake -S native -B "${BUILD_DIR}" -DPOETRY_ENABLE_PYBIND11=OFF
 cmake --build "${BUILD_DIR}"
 echo ""
 
