@@ -476,16 +476,15 @@ GP posterior mean on 2D UMAP projection of poem embeddings
 
 **Repository**: `https://github.com/cgumb/poetry`
 
-**Four guided examples** in `slides/example-{1,2,3,4}/`:
+**Three guided examples** in `slides/example-{1a,1b,1c}/`:
 
-1. **Quickstart**: Environment setup + sanity check
-2. **Fit benchmark**: Small GP fit + 2D visualization
-3. **Score benchmark**: CPU vs GPU comparison
-4. **Interactive CLI**: Rate poems, explore/exploit, visualize posterior
+1. **Example 1a**: Quickstart + 2D GP toy example
+2. **Example 1b**: Interactive CLI (rate poems, visualize preferences)
+3. **Example 1c**: Benchmarking (fit & score performance)
 
 **Each has README.md with step-by-step instructions**
 
-Start: `slides/example-1/README.md`
+Start: `slides/example-1a/README.md`
 
 **Questions?**
 
