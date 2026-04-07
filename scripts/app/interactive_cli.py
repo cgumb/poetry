@@ -27,9 +27,15 @@ class UserConfig:
     exploitation_strategy: str = "max_mean"
     exploration_strategy: str = "max_variance"
     ucb_beta: float = 2.0
-    score_backend: str = "python"
+    score_backend: str = "python"  # Always default to python (safe everywhere)
     optimize_hyperparameters: bool = False
     optimizer_maxiter: int = 50
+
+    def __post_init__(self):
+        """Validate config on initialization - ensure GPU backend only if available."""
+        if self.score_backend == "gpu" and not is_gpu_available():
+            # Silently fall back to python if GPU was saved but not available
+            self.score_backend = "python"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -282,7 +288,10 @@ def show_config_menu(config: UserConfig) -> UserConfig:
         console.print(f"  {marker} [{key}] {name}")
         console.print(f"      [dim]{desc}[/dim]")
 
-    exploit_choice = Prompt.ask("Select exploitation strategy", default="2" if config.exploitation_strategy == "ucb" else "1")
+    # Map current strategy to choice number
+    exploit_reverse_map = {strategy: key for key, (strategy, _, _) in exploit_choices.items()}
+    current_exploit_choice = exploit_reverse_map.get(config.exploitation_strategy, "1")
+    exploit_choice = Prompt.ask("Select exploitation strategy", default=current_exploit_choice)
     if exploit_choice in exploit_choices:
         config.exploitation_strategy = exploit_choices[exploit_choice][0]
 
@@ -313,7 +322,10 @@ def show_config_menu(config: UserConfig) -> UserConfig:
         console.print(f"  {marker} [{key}] {name}")
         console.print(f"      [dim]{desc}[/dim]")
 
-    explore_choice = Prompt.ask("Select exploration strategy", default="1")
+    # Map current strategy to choice number
+    explore_reverse_map = {strategy: key for key, (strategy, _, _) in explore_choices.items()}
+    current_explore_choice = explore_reverse_map.get(config.exploration_strategy, "1")
+    explore_choice = Prompt.ask("Select exploration strategy", default=current_explore_choice)
     if explore_choice in explore_choices:
         config.exploration_strategy = explore_choices[explore_choice][0]
 
@@ -333,7 +345,10 @@ def show_config_menu(config: UserConfig) -> UserConfig:
         console.print(f"  {marker} [{key}] {name}{available}")
         console.print(f"      [dim]{desc}[/dim]")
 
-    backend_choice = Prompt.ask("Select backend", default="1")
+    # Map current backend to choice number
+    backend_reverse_map = {backend: key for key, (backend, _, _) in backend_choices.items()}
+    current_backend_choice = backend_reverse_map.get(config.score_backend, "1")
+    backend_choice = Prompt.ask("Select backend", default=current_backend_choice)
     if backend_choice in backend_choices:
         selected_backend = backend_choices[backend_choice][0]
         if selected_backend == "gpu" and not has_gpu:
