@@ -8,83 +8,6 @@ An interactive poetry recommendation system that demonstrates HPC principles thr
 - User rates poems → System infers preference function → Recommends next poem
 - Balances **exploitation** (show likely favorites) vs **exploration** (ask informative questions)
 
-## The Method
-
-### From Ridge Regression to Gaussian Processes
-
-Starting from Bayesian linear regression:
-```
-y = Xβ + ε,  β ~ N(0, τ²I)
-```
-
-The **dual form** leads naturally to kernel methods:
-```
-ŷ* = k*ᵀ (K + λI)⁻¹ y
-```
-
-Generalizing to **Gaussian processes** with RBF kernel:
-```
-k(x,x') = σ²f exp(-||x-x'||² / 2ℓ²)
-```
-
-This gives us:
-- **Posterior mean**: μ(x) = expected preference
-- **Posterior variance**: σ²(x) = uncertainty
-- **Active learning**: Choose next poem by balancing mean and variance
-
-### Computational Bottlenecks
-
-| Operation | Complexity | Scaling Variable |
-|-----------|-----------|------------------|
-| **GP Fit** | O(m³) | m = rated poems |
-| **Score (mean)** | O(nmd) + O(nm) | n = candidates |
-| **Score (variance)** | O(nm²) | Expensive! |
-
-For **m = 1000 rated poems, n = 85k candidates**:
-- Fit: 1 billion FLOPs (Cholesky factorization)
-- Score with variance: 85 billion FLOPs (triangular solves)
-
-## HPC Solutions
-
-### Automatic Backend Selection
-
-The system **automatically chooses** optimal backends based on problem size:
-
-```python
-result = run_blocked_step(
-    embeddings, rated_indices, ratings,
-    fit_backend="auto",      # → native_lapack, python, or scalapack
-    score_backend="auto",    # → gpu, native_lapack, or python
-)
-```
-
-### Fit Backends (O(m³) Cholesky)
-
-| Backend | Method | When to Use |
-|---------|--------|-------------|
-| **Python** | SciPy (LAPACK) | Baseline, m < 5k |
-| **native_lapack** | PyBind11 + LAPACK | Single-node, m < 5k (instant) |
-| **native_reference** | ScaLAPACK MPI | Distributed, m > 10k |
-
-**Crossover**: ScaLAPACK beats Python at m ≈ 7k-10k with 8-16 processes
-
-**Key optimization**: Distributed kernel assembly (Milestone 1B)
-- Broadcast features (30MB) instead of scatter matrix (800MB)
-- Each rank computes its block-cyclic tiles in parallel
-- BLAS DGEMM optimization: 20-40× speedup over naive assembly
-
-### Score Backends (O(nm²) variance)
-
-| Backend | Method | Speedup (m=1000) |
-|---------|--------|------------------|
-| **Python** | NumPy + BLAS | Baseline |
-| **native_lapack** | PyBind11 + multi-threaded BLAS | 1.1-1.2× |
-| **GPU** | CuPy/CUDA | 3-4.6× |
-
-**Key insight**: Variance computation dominates scoring time for large n
-- Mean only: O(nm) - fast
-- With variance: O(nm²) - expensive but needed for exploration
-
 ## Quick Start
 
 ### Setup
@@ -184,6 +107,83 @@ Total:   0.63s per iteration
 - `spatial_variance`: Spatially diverse selection (O(n²), only for n < 10k)
 
 See [`docs/ACQUISITION_FUNCTIONS.md`](docs/ACQUISITION_FUNCTIONS.md) for detailed tradeoffs.
+
+## The Method
+
+### From Ridge Regression to Gaussian Processes
+
+Starting from Bayesian linear regression:
+```
+y = Xβ + ε,  β ~ N(0, τ²I)
+```
+
+The **dual form** leads naturally to kernel methods:
+```
+ŷ* = k*ᵀ (K + λI)⁻¹ y
+```
+
+Generalizing to **Gaussian processes** with RBF kernel:
+```
+k(x,x') = σ²f exp(-||x-x'||² / 2ℓ²)
+```
+
+This gives us:
+- **Posterior mean**: μ(x) = expected preference
+- **Posterior variance**: σ²(x) = uncertainty
+- **Active learning**: Choose next poem by balancing mean and variance
+
+### Computational Bottlenecks
+
+| Operation | Complexity | Scaling Variable |
+|-----------|-----------|------------------|
+| **GP Fit** | O(m³) | m = rated poems |
+| **Score (mean)** | O(nmd) + O(nm) | n = candidates |
+| **Score (variance)** | O(nm²) | Expensive! |
+
+For **m = 1000 rated poems, n = 85k candidates**:
+- Fit: 1 billion FLOPs (Cholesky factorization)
+- Score with variance: 85 billion FLOPs (triangular solves)
+
+## HPC Solutions
+
+### Automatic Backend Selection
+
+The system **automatically chooses** optimal backends based on problem size:
+
+```python
+result = run_blocked_step(
+    embeddings, rated_indices, ratings,
+    fit_backend="auto",      # → native_lapack, python, or scalapack
+    score_backend="auto",    # → gpu, native_lapack, or python
+)
+```
+
+### Fit Backends (O(m³) Cholesky)
+
+| Backend | Method | When to Use |
+|---------|--------|-------------|
+| **Python** | SciPy (LAPACK) | Baseline, m < 5k |
+| **native_lapack** | PyBind11 + LAPACK | Single-node, m < 5k (instant) |
+| **native_reference** | ScaLAPACK MPI | Distributed, m > 10k |
+
+**Crossover**: ScaLAPACK beats Python at m ≈ 7k-10k with 8-16 processes
+
+**Key optimization**: Distributed kernel assembly (Milestone 1B)
+- Broadcast features (30MB) instead of scatter matrix (800MB)
+- Each rank computes its block-cyclic tiles in parallel
+- BLAS DGEMM optimization: 20-40× speedup over naive assembly
+
+### Score Backends (O(nm²) variance)
+
+| Backend | Method | Speedup (m=1000) |
+|---------|--------|------------------|
+| **Python** | NumPy + BLAS | Baseline |
+| **native_lapack** | PyBind11 + multi-threaded BLAS | 1.1-1.2× |
+| **GPU** | CuPy/CUDA | 3-4.6× |
+
+**Key insight**: Variance computation dominates scoring time for large n
+- Mean only: O(nm) - fast
+- With variance: O(nm²) - expensive but needed for exploration
 
 ## Benchmarking
 
