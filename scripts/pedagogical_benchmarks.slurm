@@ -93,6 +93,8 @@ python scripts/bench_scaling_theory.py \
     --n-fixed 10000 \
     --m-fixed 1000 \
     --scalapack-executable "${EXECUTABLE}" \
+    --scalapack-launcher mpirun \
+    --scalapack-native-backend scalapack \
     --output-csv "${RESULTS_DIR}/scaling_theory.csv"
 
 echo ""
@@ -114,6 +116,8 @@ python scripts/bench_time_breakdown.py \
     --fit-backend python \
     --score-backend python \
     --scalapack-executable "${EXECUTABLE}" \
+    --scalapack-launcher mpirun \
+    --scalapack-native-backend scalapack \
     --output-csv "${RESULTS_DIR}/time_breakdown.csv"
 
 echo ""
