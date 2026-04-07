@@ -38,10 +38,20 @@ export OMPI_MCA_rmaps_base_mapping_policy=slot
 export TMPDIR="$HOME/tmp"
 mkdir -p "$TMPDIR"
 
-# Build native code
-echo "Building native code..."
-cmake -S native -B native/build
-cmake --build native/build
+# Build native code in job-specific directory
+BUILD_DIR="native/build_job_${SLURM_JOB_ID}"
+EXECUTABLE="${BUILD_DIR}/scalapack_gp_fit"
+
+echo "Building native code in ${BUILD_DIR}..."
+cmake -S native -B "${BUILD_DIR}"
+cmake --build "${BUILD_DIR}"
+echo ""
+
+if [ ! -f "${EXECUTABLE}" ]; then
+    echo "ERROR: ${EXECUTABLE} not found after build!"
+    exit 1
+fi
+echo "Built executable: ${EXECUTABLE}"
 echo ""
 
 # Output file
@@ -76,6 +86,7 @@ for m_rated in $M_RATED_LIST; do
     --n-poems $N_POEMS \
     --m-rated $m_rated \
     --seed 42 \
+    --scalapack-executable "${EXECUTABLE}" \
     --output-csv "$OUTPUT_CSV" \
     --append
 
@@ -90,6 +101,7 @@ for m_rated in $M_RATED_LIST; do
         --n-poems $N_POEMS \
         --m-rated $m_rated \
         --seed 42 \
+        --scalapack-executable "${EXECUTABLE}" \
         --scalapack-launcher mpirun \
         --scalapack-nprocs $nprocs \
         --scalapack-block-size $block_size \
@@ -120,4 +132,8 @@ echo "  - Crossover point where ScaLAPACK beats Python"
 echo "  - Optimal block size (64 vs 128 vs 256)"
 echo "  - Scaling efficiency with process count"
 echo "  - Whether ScaLAPACK enables problem sizes Python can't handle"
+echo ""
+echo "Cleaning up build directory: ${BUILD_DIR}"
+rm -rf "${BUILD_DIR}"
+echo "Done."
 echo "========================================"

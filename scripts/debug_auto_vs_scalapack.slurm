@@ -30,10 +30,22 @@ echo ""
 # Activate environment
 source scripts/activate_env.sh
 
+# Use dedicated build directory for this job
+BUILD_DIR="native/build_job_${SLURM_JOB_ID}"
+EXECUTABLE="${BUILD_DIR}/scalapack_gp_fit"
+
 # Rebuild native code (ensure latest routing fix)
-echo "Rebuilding native code..."
-cmake -S native -B native/build
-cmake --build native/build
+echo "Rebuilding native code in ${BUILD_DIR}..."
+cmake -S native -B "${BUILD_DIR}"
+cmake --build "${BUILD_DIR}"
+echo ""
+
+# Check executable exists
+if [ ! -f "${EXECUTABLE}" ]; then
+    echo "ERROR: ${EXECUTABLE} not found after build!"
+    exit 1
+fi
+echo "Built executable: ${EXECUTABLE}"
 echo ""
 
 # Test problem: m=2000, n=5000, d=10
@@ -106,6 +118,7 @@ result = run_blocked_step(
     fit_backend="native_reference",
     score_backend="none",
     optimize_hyperparameters=False,
+    scalapack_executable="$EXECUTABLE",
     scalapack_nprocs=8,
     scalapack_block_size=128,
     # NOT PASSING scalapack_native_backend - defaults to "auto"
@@ -157,6 +170,7 @@ result = run_blocked_step(
     fit_backend="native_reference",
     score_backend="none",
     optimize_hyperparameters=False,
+    scalapack_executable="$EXECUTABLE",
     scalapack_nprocs=8,
     scalapack_block_size=128,
     scalapack_native_backend="scalapack",  # EXPLICIT
@@ -191,6 +205,7 @@ python scripts/bench_step.py \
     --m-rated $M \
     --dim $D \
     --seed 42 \
+    --scalapack-executable "${EXECUTABLE}" \
     --scalapack-nprocs 8 \
     --scalapack-block-size 128
 
@@ -207,9 +222,18 @@ python scripts/bench_step.py \
     --m-rated $M \
     --dim $D \
     --seed 42 \
+    --scalapack-executable "${EXECUTABLE}" \
     --scalapack-nprocs 8 \
     --scalapack-block-size 128 \
     --scalapack-native-backend scalapack
+
+echo ""
+echo "========================================================================"
+echo "CLEANUP"
+echo "========================================================================"
+echo "Removing build directory: ${BUILD_DIR}"
+rm -rf "${BUILD_DIR}"
+echo "Done."
 
 echo ""
 echo "========================================================================"

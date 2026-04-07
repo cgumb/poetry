@@ -23,19 +23,23 @@ echo "========================================================================"
 echo "Job ID: ${SLURM_JOB_ID}"
 echo ""
 
+# Use dedicated build directory for this job
+BUILD_DIR="native/build_job_${SLURM_JOB_ID}"
+EXECUTABLE="${BUILD_DIR}/scalapack_gp_fit"
+
 # Rebuild native code
-echo "Rebuilding native code..."
-cmake -S native -B native/build
-cmake --build native/build
+echo "Rebuilding native code in ${BUILD_DIR}..."
+cmake -S native -B "${BUILD_DIR}"
+cmake --build "${BUILD_DIR}"
 echo ""
 
 # Check that executable exists
-if [ ! -f "native/build/scalapack_gp_fit" ]; then
-    echo "ERROR: native/build/scalapack_gp_fit not found!"
+if [ ! -f "${EXECUTABLE}" ]; then
+    echo "ERROR: ${EXECUTABLE} not found!"
     exit 1
 fi
 
-echo "Executable: $(ls -lh native/build/scalapack_gp_fit)"
+echo "Executable: $(ls -lh ${EXECUTABLE})"
 echo ""
 
 # Create test problem
@@ -80,7 +84,7 @@ echo "========================================================================"
 echo "TEST 1: --backend auto"
 echo "========================================================================"
 
-srun -n 8 native/build/scalapack_gp_fit \
+srun -n 8 "${EXECUTABLE}" \
     --input-meta "$WORKDIR/input.json" \
     --matrix-bin "$WORKDIR/x.bin" \
     --rhs-bin "$WORKDIR/y.bin" \
@@ -105,7 +109,7 @@ echo "========================================================================"
 echo "TEST 2: --backend scalapack"
 echo "========================================================================"
 
-srun -n 8 native/build/scalapack_gp_fit \
+srun -n 8 "${EXECUTABLE}" \
     --input-meta "$WORKDIR/input.json" \
     --matrix-bin "$WORKDIR/x.bin" \
     --rhs-bin "$WORKDIR/y.bin" \
@@ -130,7 +134,7 @@ echo "========================================================================"
 echo "TEST 3: --backend mpi_row_partitioned_reference (should be slow)"
 echo "========================================================================"
 
-srun -n 8 native/build/scalapack_gp_fit \
+srun -n 8 "${EXECUTABLE}" \
     --input-meta "$WORKDIR/input.json" \
     --matrix-bin "$WORKDIR/x.bin" \
     --rhs-bin "$WORKDIR/y.bin" \
@@ -209,4 +213,8 @@ echo "Workdir preserved: $WORKDIR"
 echo "You can inspect:"
 echo "  - input.json: problem specification"
 echo "  - output_*.json: results and timings"
+echo ""
+echo "Cleaning up build directory: ${BUILD_DIR}"
+rm -rf "${BUILD_DIR}"
+echo "Done."
 echo "========================================================================"

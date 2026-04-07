@@ -76,6 +76,12 @@ def parse_args() -> argparse.Namespace:
         help="Block size for ScaLAPACK",
     )
     parser.add_argument(
+        "--scalapack-executable",
+        type=str,
+        default="native/build/scalapack_gp_fit",
+        help="Path to ScaLAPACK executable (default: native/build/scalapack_gp_fit)",
+    )
+    parser.add_argument(
         "--output-csv",
         type=Path,
         required=True,
@@ -107,6 +113,7 @@ def measure_breakdown(
             fit_backend=args.fit_backend,
             score_backend=args.score_backend,
             optimize_hyperparameters=False,
+            scalapack_executable=args.scalapack_executable,
             scalapack_nprocs=args.scalapack_nprocs,
             scalapack_block_size=args.scalapack_block_size,
         )

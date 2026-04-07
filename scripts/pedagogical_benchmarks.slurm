@@ -48,9 +48,20 @@ fi
 echo ""
 
 # Build native code (CRITICAL: ensures backend routing fix is compiled)
-echo "Building native code..."
-cmake -S native -B native/build
-cmake --build native/build
+# Use job-specific build directory to avoid conflicts with concurrent jobs
+BUILD_DIR="native/build_job_${SLURM_JOB_ID}"
+EXECUTABLE="${BUILD_DIR}/scalapack_gp_fit"
+
+echo "Building native code in ${BUILD_DIR}..."
+cmake -S native -B "${BUILD_DIR}"
+cmake --build "${BUILD_DIR}"
+echo ""
+
+if [ ! -f "${EXECUTABLE}" ]; then
+    echo "ERROR: ${EXECUTABLE} not found after build!"
+    exit 1
+fi
+echo "Built executable: ${EXECUTABLE}"
 echo ""
 
 #
@@ -70,6 +81,7 @@ python scripts/bench_scaling_theory.py \
     --n-score-sweep 5000 10000 20000 50000 100000 \
     --n-fixed 10000 \
     --m-fixed 1000 \
+    --scalapack-executable "${EXECUTABLE}" \
     --output-csv "${RESULTS_DIR}/scaling_theory.csv"
 
 echo ""
@@ -90,6 +102,7 @@ python scripts/bench_time_breakdown.py \
     --n-values 10000 50000 100000 \
     --fit-backend python \
     --score-backend python \
+    --scalapack-executable "${EXECUTABLE}" \
     --output-csv "${RESULTS_DIR}/time_breakdown.csv"
 
 echo ""
@@ -109,6 +122,7 @@ python scripts/bench_overhead_crossover.py \
     --m-values 100 200 500 1000 2000 5000 10000 20000 \
     --n-fixed 25000 \
     --backends python native_lapack native_reference \
+    --scalapack-executable "${EXECUTABLE}" \
     --scalapack-nprocs 8 \
     --scalapack-block-size 128 \
     --output-csv "${RESULTS_DIR}/overhead_crossover.csv"
@@ -151,4 +165,8 @@ echo "These plots demonstrate fundamental HPC concepts:"
 echo "  • Theoretical complexity matches practice"
 echo "  • Bottlenecks shift with problem size"
 echo "  • Overhead vs compute tradeoffs"
+echo ""
+echo "Cleaning up build directory: ${BUILD_DIR}"
+rm -rf "${BUILD_DIR}"
+echo "Done."
 echo "========================================================================"
