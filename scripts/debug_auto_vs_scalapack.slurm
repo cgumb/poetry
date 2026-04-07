@@ -30,6 +30,14 @@ echo ""
 # Activate environment
 source scripts/activate_env.sh
 
+# Disable threading for fair comparison (match large_scale_bench.slurm)
+unset SLURM_CPU_BIND SLURM_CPU_BIND_LIST SLURM_CPU_BIND_TYPE SLURM_CPU_BIND_VERBOSE
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OMPI_MCA_hwloc_base_binding_policy=none
+export OMPI_MCA_rmaps_base_mapping_policy=slot
+
 # Use dedicated build directory for this job
 BUILD_DIR="native/build_job_${SLURM_JOB_ID}"
 EXECUTABLE="${BUILD_DIR}/scalapack_gp_fit"
@@ -108,7 +116,7 @@ ratings = rng.normal(size=m)
 print(f"Problem: m={m}, n={n}, d={d}")
 print("Backend: native_reference")
 print("scalapack_native_backend: 'auto' (DEFAULT)")
-print("scalapack_launcher: 'srun' (DEFAULT)")
+print("scalapack_launcher: 'mpirun' (EXPLICIT - match large_scale)")
 print()
 
 start = time.time()
@@ -119,10 +127,10 @@ result = run_blocked_step(
     score_backend="none",
     optimize_hyperparameters=False,
     scalapack_executable="$EXECUTABLE",
+    scalapack_launcher="mpirun",
     scalapack_nprocs=8,
     scalapack_block_size=128,
     # NOT PASSING scalapack_native_backend - defaults to "auto"
-    # NOT PASSING scalapack_launcher - defaults to "srun"
 )
 end = time.time()
 
@@ -160,7 +168,7 @@ ratings = rng.normal(size=m)
 print(f"Problem: m={m}, n={n}, d={d}")
 print("Backend: native_reference")
 print("scalapack_native_backend: 'scalapack' (EXPLICIT)")
-print("scalapack_launcher: 'srun'")
+print("scalapack_launcher: 'mpirun' (EXPLICIT - match large_scale)")
 print()
 
 start = time.time()
@@ -171,10 +179,10 @@ result = run_blocked_step(
     score_backend="none",
     optimize_hyperparameters=False,
     scalapack_executable="$EXECUTABLE",
+    scalapack_launcher="mpirun",
     scalapack_nprocs=8,
     scalapack_block_size=128,
     scalapack_native_backend="scalapack",  # EXPLICIT
-    scalapack_launcher="srun",
 )
 end = time.time()
 
@@ -206,6 +214,7 @@ python scripts/bench_step.py \
     --dim $D \
     --seed 42 \
     --scalapack-executable "${EXECUTABLE}" \
+    --scalapack-launcher mpirun \
     --scalapack-nprocs 8 \
     --scalapack-block-size 128
 
@@ -223,6 +232,7 @@ python scripts/bench_step.py \
     --dim $D \
     --seed 42 \
     --scalapack-executable "${EXECUTABLE}" \
+    --scalapack-launcher mpirun \
     --scalapack-nprocs 8 \
     --scalapack-block-size 128 \
     --scalapack-native-backend scalapack

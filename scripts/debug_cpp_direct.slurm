@@ -23,6 +23,16 @@ echo "========================================================================"
 echo "Job ID: ${SLURM_JOB_ID}"
 echo ""
 
+# Disable threading for fair comparison (match large_scale_bench.slurm)
+unset SLURM_CPU_BIND SLURM_CPU_BIND_LIST SLURM_CPU_BIND_TYPE SLURM_CPU_BIND_VERBOSE
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OMPI_MCA_hwloc_base_binding_policy=none
+export OMPI_MCA_rmaps_base_mapping_policy=slot
+echo "Threading disabled: OMP_NUM_THREADS=$OMP_NUM_THREADS"
+echo ""
+
 # Use dedicated build directory for this job
 BUILD_DIR="native/build_job_${SLURM_JOB_ID}"
 EXECUTABLE="${BUILD_DIR}/scalapack_gp_fit"

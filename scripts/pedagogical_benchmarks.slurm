@@ -47,6 +47,16 @@ else
 fi
 echo ""
 
+# Disable threading for fair comparison (match large_scale_bench.slurm)
+unset SLURM_CPU_BIND SLURM_CPU_BIND_LIST SLURM_CPU_BIND_TYPE SLURM_CPU_BIND_VERBOSE
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OMPI_MCA_hwloc_base_binding_policy=none
+export OMPI_MCA_rmaps_base_mapping_policy=slot
+echo "Threading disabled: OMP_NUM_THREADS=$OMP_NUM_THREADS"
+echo ""
+
 # Build native code (CRITICAL: ensures backend routing fix is compiled)
 # Use job-specific build directory to avoid conflicts with concurrent jobs
 BUILD_DIR="native/build_job_${SLURM_JOB_ID}"
@@ -123,8 +133,10 @@ python scripts/bench_overhead_crossover.py \
     --n-fixed 25000 \
     --backends python native_lapack native_reference \
     --scalapack-executable "${EXECUTABLE}" \
+    --scalapack-launcher mpirun \
     --scalapack-nprocs 8 \
     --scalapack-block-size 128 \
+    --scalapack-native-backend scalapack \
     --output-csv "${RESULTS_DIR}/overhead_crossover.csv"
 
 echo ""

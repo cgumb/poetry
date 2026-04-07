@@ -82,6 +82,20 @@ def parse_args() -> argparse.Namespace:
         help="Path to ScaLAPACK executable (default: native/build/scalapack_gp_fit)",
     )
     parser.add_argument(
+        "--scalapack-launcher",
+        type=str,
+        choices=["srun", "mpirun"],
+        default="srun",
+        help="Launcher for ScaLAPACK (default: srun)",
+    )
+    parser.add_argument(
+        "--scalapack-native-backend",
+        type=str,
+        choices=["auto", "scalapack", "mpi", "mpi_row_partitioned_reference"],
+        default="auto",
+        help="Native backend for ScaLAPACK (default: auto)",
+    )
+    parser.add_argument(
         "--output-csv",
         type=Path,
         required=True,
@@ -114,8 +128,10 @@ def measure_breakdown(
             score_backend=args.score_backend,
             optimize_hyperparameters=False,
             scalapack_executable=args.scalapack_executable,
+            scalapack_launcher=args.scalapack_launcher,
             scalapack_nprocs=args.scalapack_nprocs,
             scalapack_block_size=args.scalapack_block_size,
+            scalapack_native_backend=args.scalapack_native_backend,
         )
 
         fit_time = result.profile.fit_seconds
