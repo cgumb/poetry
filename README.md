@@ -203,7 +203,7 @@ This measures:
 
 Generates CSV data and publication-quality figures automatically.
 
-**See**: [`docs/RUNNING_BENCHMARKS.md`](docs/RUNNING_BENCHMARKS.md) for detailed instructions and interpretation.
+**See**: [`docs/BENCHMARKING_GUIDE.md`](docs/BENCHMARKING_GUIDE.md) for detailed instructions and interpretation.
 
 ### Individual Benchmarks
 

@@ -25,9 +25,7 @@ Performance claims like "ScaLAPACK is faster for large problems" are meaningless
 sbatch scripts/pedagogical_benchmarks.slurm
 ```
 
-This runs three core benchmarks and generates visualizations automatically. Results are saved to `results/pedagogy_TIMESTAMP/`.
-
-**See**: [RUNNING_BENCHMARKS.md](RUNNING_BENCHMARKS.md) for detailed instructions and interpretation.
+This runs three core benchmarks and generates visualizations automatically. Results are saved to `results/pedagogy_TIMESTAMP/`. See the sections below for detailed interpretation of results.
 
 ---
 
@@ -120,6 +118,30 @@ python scripts/bench_step.py \
 
 **What to look for**: Slope on log-log plot reveals complexity.
 
+On a log-log plot, a power-law relationship T = c·m^k appears as a straight line with slope k.
+
+**How to read slopes** (simple rule):
+
+Fit time vs m (expect O(m³)):
+```
+If doubling m multiplies time by 8, then slope ≈ 3
+because 2³ = 8
+```
+
+Score time vs m (expect O(m²)):
+```
+If doubling m multiplies time by 4, then slope ≈ 2
+because 2² = 4
+```
+
+Score time vs n (expect O(n)):
+```
+If doubling n multiplies time by 2, then slope ≈ 1
+because 2¹ = 2
+```
+
+**What slopes mean**:
+
 Fit time vs m (log-log):
 ```
 Slope ≈ 3 → O(m³) scaling (Cholesky factorization)
@@ -132,6 +154,11 @@ Score time vs m (log-log):
 Slope ≈ 2 → O(m²) scaling (variance computation dominates)
 Slope ≈ 1 → O(m) scaling (mean-only computation)
 ```
+
+**Why slopes deviate from theory**:
+- **Slope < expected**: BLAS optimization, cache effects, or overhead
+- **Slope > expected**: Memory thrashing, cache misses, or communication costs
+- **Slope matches at large sizes**: Asymptotic behavior dominates
 
 **Example interpretation**:
 ```
@@ -449,10 +476,36 @@ python scripts/bench_scoring.py --m-rated 1000 2000 5000
 4. **Scaling is limited**: Communication and Amdahl's law limit speedup
 5. **Visualize results**: Log-log plots reveal scaling behavior
 
-**For teaching**:
+---
+
+## Pedagogical Goals
+
+These benchmarks are designed to teach:
+
+1. **Empirical Validation**: Theory predicts O(m³), measurements confirm it
+2. **Bottleneck Analysis**: Time profiling reveals where optimization matters
+3. **Overhead Tradeoffs**: "More HPC" isn't always better
+4. **Crossover Points**: Optimal solution depends on problem size
+5. **Parallel Scaling**: Communication limits speedup (Amdahl's law)
+
+Each benchmark includes:
+- Clear problem statement
+- Expected theoretical behavior
+- Empirical measurements
+- Interpretation guidance
+
+**Use these benchmarks to**:
+- Demonstrate HPC concepts in lectures
+- Validate implementation correctness
+- Motivate design decisions
+- Show that theory connects to practice
+
+**Key teaching moments**:
 - Benchmarking connects theory (O(m³)) to practice (actual timings)
 - Overhead vs compute is a fundamental HPC tradeoff
 - Parallel scaling limits are measurable, not theoretical
+- Real measurements deviate from ideal (cache effects, communication, overhead)
+- The "best" solution depends on context (problem size, hardware, goals)
 
 ---
 
