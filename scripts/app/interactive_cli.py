@@ -17,6 +17,7 @@ from rich import box
 from poetry_gp.backends.blocked import run_blocked_step
 from poetry_gp.backends.scoring import try_create_daemon_client
 from poetry_gp.backends.gpu_scoring import is_gpu_available
+from poetry_gp.session_viz import render_session_gp_outputs
 
 console = Console()
 
@@ -86,6 +87,15 @@ def parse_args() -> argparse.Namespace:
                         help="Number of MPI processes for daemon scoring")
     parser.add_argument("--daemon-launcher", type=str, default="mpirun",
                         help="MPI launcher for daemon (mpirun, srun, etc.)")
+    # Visualization arguments
+    parser.add_argument("--coords-2d", type=Path, default=None,
+                        help="Path to 2D projection coordinates (.npy) for heatmap visualization")
+    parser.add_argument("--viz-output-dir", type=Path, default=Path("data/viz"),
+                        help="Output directory for visualization plots")
+    parser.add_argument("--poets-metadata", type=Path, default=None,
+                        help="Path to poet centroids metadata (.parquet) for overlay")
+    parser.add_argument("--poet-coords", type=Path, default=None,
+                        help="Path to poet centroid coordinates (.npy) for overlay")
     return parser.parse_args()
 
 
@@ -431,6 +441,15 @@ def main() -> None:
     with console.status("[bold cyan]Loading corpus...", spinner="dots"):
         poems = pd.read_parquet(args.poems)
         embeddings = np.load(args.embeddings, mmap_mode="r")
+        # Load optional 2D projection for visualization
+        coords_2d = None
+        if args.coords_2d is not None and args.coords_2d.exists():
+            coords_2d = np.load(args.coords_2d, mmap_mode="r")
+            if coords_2d.shape[0] != len(poems):
+                console.print(f"[yellow]⚠[/yellow] Warning: coords_2d has {coords_2d.shape[0]} rows but poems has {len(poems)} - disabling visualization")
+                coords_2d = None
+            else:
+                console.print(f"[green]✓[/green] Loaded 2D projection ({coords_2d.shape[1]}D)")
 
     if len(poems) != embeddings.shape[0]:
         raise ValueError("poem and embedding row counts do not match")
@@ -491,6 +510,7 @@ def main() -> None:
             console.print("[yellow]⚠[/yellow] Daemon unavailable, will use Python scoring")
 
     # Create help panel
+    viz_cmd = "[violet bold]v[/violet bold]isualize   [dim]|[/dim]   " if coords_2d is not None else ""
     help_panel = Panel(
         "[green bold]l[/green bold]ike   [dim]|[/dim]   "
         "[yellow bold]n[/yellow bold]eutral   [dim]|[/dim]   "
@@ -499,6 +519,7 @@ def main() -> None:
         "[magenta bold]x[/magenta bold]plore\n"
         "[blue bold]s[/blue bold]earch   [dim]|[/dim]   "
         "[yellow bold]r[/yellow bold]ated   [dim]|[/dim]   "
+        f"{viz_cmd}"
         "[cyan bold]c[/cyan bold]onfig   [dim]|[/dim]   "
         "[red bold]q[/red bold]uit",
         title="🎮 Commands",
@@ -550,6 +571,63 @@ def main() -> None:
                 if selected is not None:
                     current_idx = selected
                     save_session(session_file, current_idx, rated_indices, ratings, user_config)
+                continue
+
+            if cmd == "v":
+                # Visualize posterior heatmaps
+                if coords_2d is None:
+                    console.print("[yellow]Visualization requires --coords-2d argument[/yellow]")
+                    continue
+                if not rated_indices:
+                    console.print("[yellow]Rate at least one poem first.[/yellow]")
+                    continue
+
+                with console.status("[bold cyan]Generating posterior heatmaps...", spinner="dots"):
+                    # Compute GP posterior first
+                    result = run_blocked_step(
+                        embeddings,
+                        np.array(rated_indices, dtype=np.int64),
+                        np.array(ratings, dtype=np.float64),
+                        length_scale=current_length_scale,
+                        variance=current_variance,
+                        noise=current_noise,
+                        optimize_hyperparameters=user_config.optimize_hyperparameters,
+                        optimizer_maxiter=user_config.optimizer_maxiter,
+                        score_backend=user_config.score_backend,
+                        exploitation_strategy=user_config.exploitation_strategy,
+                        exploration_strategy=user_config.exploration_strategy,
+                        ucb_beta=user_config.ucb_beta,
+                        daemon_client=daemon_client,
+                        daemon_nprocs=args.daemon_nprocs,
+                        daemon_launcher=args.daemon_launcher,
+                    )
+
+                    # Render heatmaps
+                    viz_result = render_session_gp_outputs(
+                        poems=poems,
+                        embeddings=embeddings,
+                        coords_2d=coords_2d,
+                        rated_indices=rated_indices,
+                        ratings=ratings,
+                        output_dir=args.viz_output_dir,
+                        current_index=current_idx,
+                        precomputed_result=result,
+                        poets_path=args.poets_metadata,
+                        poet_coords_path=args.poet_coords,
+                        length_scale=current_length_scale,
+                        variance=current_variance,
+                        noise=current_noise,
+                    )
+
+                # Display results with clickable links (file:// URLs)
+                console.print("\n[green]✓ Visualization complete![/green]\n")
+
+                mean_plot_abs = viz_result.outputs.latest_mean_plot.resolve()
+                var_plot_abs = viz_result.outputs.latest_variance_plot.resolve()
+
+                console.print(f"  📊 Posterior mean:     [link=file://{mean_plot_abs}]{mean_plot_abs}[/link]")
+                console.print(f"  📊 Posterior variance: [link=file://{var_plot_abs}]{var_plot_abs}[/link]")
+                console.print()
                 continue
 
             if cmd not in {"e", "x"}:

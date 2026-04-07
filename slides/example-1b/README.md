@@ -34,19 +34,31 @@ source scripts/activate_env.sh --gpu        # GPU (if on GPU node)
 
 ## Step 3: Launch CLI
 
+**Basic usage (no visualization)**:
 ```bash
 python scripts/app/interactive_cli.py
+```
+
+**With visualization support** (requires 2D projection):
+```bash
+python scripts/app/interactive_cli.py \
+  --coords-2d data/coords_2d.npy \
+  --viz-output-dir data/viz
 ```
 
 ## Step 4: Build Your Preference Model
 
 **Commands**:
-- `n <rating>` - Rate current poem (-1 to 1, or 'skip')
+- `l` - **Like** current poem (+1.0)
+- `n` - **Neutral** (0.0)
+- `d` - **Dislike** (-1.0)
 - `e` - **Exploit**: Get recommendation
 - `x` - **Explore**: Get informative query
-- `v` - Visualize posterior
-- `s` - Show session stats
-- `q` - Quit
+- `v` - **Visualize** posterior heatmaps (requires --coords-2d)
+- `s` - **Search** poems by title/poet/text
+- `r` - Show **rated** poems
+- `c` - Open **config** menu
+- `q` - **Quit**
 
 **Strategy**:
 
@@ -57,27 +69,36 @@ python scripts/app/interactive_cli.py
 
 ## Step 5: Visualize Your Preferences
 
-After rating 20+ poems:
+After rating 5+ poems, use the `v` command to generate posterior heatmaps:
 
 ```
 v
 ```
 
-This creates:
+This creates two visualizations in `data/viz/`:
 ```
-results/session_plots/latest_posterior_mean_hexbin.png
+data/viz/latest_posterior_mean.png       # Predicted ratings
+data/viz/latest_posterior_variance.png   # Uncertainty map
 ```
 
-The visualization shows:
-- **Hexbins**: Poem embedding space (2D UMAP projection)
-- **Colors**: Your predicted preference (red=love, blue=dislike)
-- **Black dots**: Poems you rated
-- **Triangles**: Poet clusters
+The CLI will display **clickable file:// links** (in supported terminals) for easy viewing!
+
+**Visualization shows**:
+- **Heatmap**: Smoothed posterior over 2D poem space (UMAP projection)
+- **Colors**:
+  - Mean: Red/blue diverging (red=predicted like, blue=predicted dislike)
+  - Variance: Yellow/orange sequential (bright=uncertain, dark=confident)
+- **Markers**:
+  - Black circles: Poems you rated
+  - Cyan X: Current poem
+  - Green star: Exploit recommendation
+  - Gold square: Explore recommendation
+- **Purple triangles**: Poet centroids (if provided)
 
 **Copy to view locally**:
 ```bash
 # From your local machine:
-scp <user>@<cluster>:poetry/results/session_plots/latest_*.png .
+scp <user>@<cluster>:poetry/data/viz/latest_*.png .
 ```
 
 ## Understanding the Heatmap
@@ -98,27 +119,34 @@ scp <user>@<cluster>:poetry/results/session_plots/latest_*.png .
 
 ```bash
 # Rate a few poems
-Rating: 0.8
-Rating: -0.5
-Rating: 0.3
+> l     # Like current poem (+1.0)
+> d     # Dislike next poem (-1.0)
+> n     # Neutral (0.0)
 
 # Explore to find informative poems
 > x
 [High-uncertainty poem shown]
-Rating: 0.6
+> l
 
 # Get recommendation
 > e
-[Similar to your likes]
-Rating: 0.9
+[Poem similar to your likes]
+> l
 
-# Visualize (after ~20 ratings)
+# Visualize (after ~5+ ratings)
 > v
-✓ Saved posterior visualization
+✓ Visualization complete!
+  📊 Posterior mean:     file:///.../data/viz/latest_posterior_mean.png
+  📊 Posterior variance: file:///.../data/viz/latest_posterior_variance.png
 
-# Check stats
+# View rated poems
+> r
+[Table of all rated poems with scores]
+
+# Search for specific poet
 > s
-Rated poems: 23
+🔍 Search title/poet/text: shakespeare
+[Search results shown]
 ```
 
 ## Next Steps
