@@ -52,7 +52,7 @@ def main():
     mean, std = gp_posterior(X_train, y_train, X_test, length_scale=0.8, variance=1.0, noise=0.1)
 
     # Plot
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(9, 4.5))
 
     # True function (for comparison)
     plt.plot(X_test, true_function(X_test[:, 0]), 'g--', alpha=0.3, label='True function (unknown)', linewidth=2)

@@ -19,7 +19,7 @@ def load_benchmark_data(csv_path):
 
 def plot_fit_scaling(df, output_path):
     """Plot fit time vs m for different backends and process counts."""
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(9, 5))
 
     # Extract Python baseline
     python_df = df[df['fit_backend'] == 'python'].copy()
@@ -59,7 +59,7 @@ def plot_fit_scaling(df, output_path):
 
 def plot_speedup_analysis(df, output_path):
     """Plot speedup vs m for ScaLAPACK with 8 processes."""
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(9, 5))
 
     # Python baseline
     python_df = df[df['fit_backend'] == 'python'].copy()
@@ -112,7 +112,7 @@ def plot_speedup_analysis(df, output_path):
 
 def plot_process_scaling(df, output_path, m_target=20000):
     """Plot time vs process count for a specific m value."""
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(9, 5))
 
     # Filter for target m and ScaLAPACK
     subset = df[(df['fit_backend'] == 'native_reference') &
@@ -164,7 +164,7 @@ def plot_process_scaling(df, output_path, m_target=20000):
 
 def plot_log_log_scaling(df, output_path):
     """Plot fit time vs m on log-log scale to show O(m³) scaling."""
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(9, 5))
 
     # Python baseline
     python_df = df[df['fit_backend'] == 'python'].copy()
@@ -204,7 +204,7 @@ def plot_log_log_scaling(df, output_path):
 
 def main():
     # Find benchmark CSV
-    csv_path = Path('../results/large_scale_fit_20260406_233011.csv')
+    csv_path = Path('../../results/large_scale_fit_20260406_233011.csv')
 
     if not csv_path.exists():
         print(f"ERROR: Benchmark CSV not found at {csv_path}")
