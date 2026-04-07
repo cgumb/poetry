@@ -53,7 +53,7 @@ echo ""
 FILES_TO_SHARE=(
     "data/poems.parquet:Core dataset with imputed poets"
     "data/embeddings.npy:384-dim poem embeddings"
-    "data/proj2d_coords.npy:2D projection of all poems"
+    "data/proj2d.npy:2D projection of all poems"
     "data/proj2d_reducer.pkl:UMAP reducer for 2D projection"
     "data/poet_centroids.parquet:Poet metadata (name, poem count)"
     "data/poet_centroids.npy:384-dim poet centroid embeddings"

@@ -102,13 +102,34 @@ source scripts/activate_env.sh --gpu
 python scripts/app/check_env.py
 ```
 
-### Build Corpus and Embeddings
+### Get Preprocessed Data (Students)
+
+**Skip 2+ hours of embedding generation** by using shared preprocessed data:
+
+```bash
+# Symlink preprocessed data from shared location
+bash scripts/setup_shared_data.sh
+```
+
+This creates symlinks to:
+- `poems.parquet` - 85k poems with imputed poet names
+- `embeddings.npy` - 384-dim poem embeddings
+- `proj2d.npy` - 2D UMAP projection
+- `poet_centroids.npy` - Poet centroid embeddings
+
+Now you can skip to [Interactive Session](#interactive-session) or [Benchmarks](#benchmarks).
+
+See [`docs/SHARED_DATA_SETUP.md`](docs/SHARED_DATA_SETUP.md) for details.
+
+### Build Corpus and Embeddings (Optional - Advanced Users)
+
+**Only needed if regenerating data from scratch** (takes ~2 hours):
 
 ```bash
 # Download and deduplicate poems
 python scripts/app/build_poetry_corpus.py
 
-# Generate embeddings
+# Generate embeddings (~2 hours for 85k poems)
 python scripts/app/embed_poems.py \
   --input data/poems.parquet \
   --output data/embeddings.npy
@@ -117,9 +138,16 @@ python scripts/app/embed_poems.py \
 python scripts/app/project_poems_2d.py \
   --input data/embeddings.npy \
   --output data/proj2d.npy
+
+# Build poet centroids
+python scripts/app/build_poet_centroids.py \
+  --poems data/poems.parquet \
+  --embeddings data/embeddings.npy \
+  --output-parquet data/poet_centroids.parquet \
+  --output-npy data/poet_centroids.npy
 ```
 
-See [`docs/CORPUS_BUILDING.md`](docs/CORPUS_BUILDING.md) for data pipeline details.
+See [`docs/CORPUS_BUILDING.md`](docs/CORPUS_BUILDING.md) for full data pipeline details.
 
 ### Interactive Session
 

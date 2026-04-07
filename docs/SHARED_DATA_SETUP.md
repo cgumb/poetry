@@ -20,7 +20,7 @@ bash scripts/setup_shared_data.sh
 This creates symlinks in `data/` pointing to:
 - `poems.parquet` - 85k poems with imputed poet names
 - `embeddings.npy` - 384-dimensional poem embeddings
-- `proj2d_coords.npy` - 2D UMAP projection of all poems
+- `proj2d.npy` - 2D UMAP projection of all poems
 - `proj2d_reducer.pkl` - UMAP reducer for projecting new points
 - `poet_centroids.parquet` - Poet metadata (name, poem count)
 - `poet_centroids.npy` - 384-dim poet centroid embeddings

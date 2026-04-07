@@ -35,7 +35,7 @@ mkdir -p "$LOCAL_DATA_DIR"
 SHARED_FILES=(
     "poems.parquet"
     "embeddings.npy"
-    "proj2d_coords.npy"
+    "proj2d.npy"
     "proj2d_reducer.pkl"
     "poet_centroids.parquet"
     "poet_centroids.npy"
