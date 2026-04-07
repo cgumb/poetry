@@ -5,6 +5,7 @@
 ## Prerequisites
 
 - Completed Example 1a (environment set up)
+- Shared data symlinked (run `bash scripts/setup_shared_data.sh` if not done)
 
 ## Overview
 
@@ -34,16 +35,18 @@ source scripts/activate_env.sh --gpu        # GPU (if on GPU node)
 
 ## Step 3: Launch CLI
 
-**Basic usage (no visualization)**:
+**Basic usage**:
 ```bash
 python scripts/app/interactive_cli.py
 ```
 
-**With visualization support** (requires 2D projection):
+The CLI automatically enables visualization if `data/proj2d.npy` exists (created by `scripts/setup_shared_data.sh`).
+
+**Custom paths** (if using different data location):
 ```bash
 python scripts/app/interactive_cli.py \
-  --coords-2d data/coords_2d.npy \
-  --viz-output-dir data/viz
+  --coords-2d /path/to/proj2d.npy \
+  --viz-output-dir custom_viz_dir
 ```
 
 ## Step 4: Build Your Preference Model

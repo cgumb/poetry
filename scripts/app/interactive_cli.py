@@ -88,13 +88,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--daemon-launcher", type=str, default="mpirun",
                         help="MPI launcher for daemon (mpirun, srun, etc.)")
     # Visualization arguments
-    parser.add_argument("--coords-2d", type=Path, default=None,
+    parser.add_argument("--coords-2d", type=Path, default=Path("data/proj2d.npy"),
                         help="Path to 2D projection coordinates (.npy) for heatmap visualization")
     parser.add_argument("--viz-output-dir", type=Path, default=Path("data/viz"),
                         help="Output directory for visualization plots")
-    parser.add_argument("--poets-metadata", type=Path, default=None,
+    parser.add_argument("--poets-metadata", type=Path, default=Path("data/poet_centroids.parquet"),
                         help="Path to poet centroids metadata (.parquet) for overlay")
-    parser.add_argument("--poet-coords", type=Path, default=None,
+    parser.add_argument("--poet-coords", type=Path, default=Path("data/poet_centroids_2d.npy"),
                         help="Path to poet centroid coordinates (.npy) for overlay")
     return parser.parse_args()
 
@@ -443,13 +443,13 @@ def main() -> None:
         embeddings = np.load(args.embeddings, mmap_mode="r")
         # Load optional 2D projection for visualization
         coords_2d = None
-        if args.coords_2d is not None and args.coords_2d.exists():
+        if args.coords_2d.exists():
             coords_2d = np.load(args.coords_2d, mmap_mode="r")
             if coords_2d.shape[0] != len(poems):
                 console.print(f"[yellow]⚠[/yellow] Warning: coords_2d has {coords_2d.shape[0]} rows but poems has {len(poems)} - disabling visualization")
                 coords_2d = None
             else:
-                console.print(f"[green]✓[/green] Loaded 2D projection ({coords_2d.shape[1]}D)")
+                console.print(f"[green]✓[/green] Loaded 2D projection for visualization")
 
     if len(poems) != embeddings.shape[0]:
         raise ValueError("poem and embedding row counts do not match")
