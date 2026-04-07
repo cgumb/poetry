@@ -202,6 +202,105 @@ def plot_log_log_scaling(df, output_path):
     print(f"✓ Saved {output_path}")
     plt.close()
 
+def plot_time_breakdown(df, output_path):
+    """Plot time breakdown: fit vs score as function of m."""
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    # Python baseline - fit times
+    python_df = df[df['fit_backend'] == 'python'].copy()
+    python_fit = python_df.groupby('m_rated')['fit_seconds'].mean()
+    python_score = python_df.groupby('m_rated')['score_seconds'].mean()
+
+    # Plot stacked area for breakdown
+    m_values = sorted(python_fit.index)
+    fit_times = [python_fit[m] for m in m_values]
+    score_times = [python_score[m] for m in m_values]
+    total_times = [fit_times[i] + score_times[i] for i in range(len(m_values))]
+
+    # Stacked area plot
+    ax.fill_between(m_values, 0, fit_times, alpha=0.7, color='C0', label='Fit (O(m³))')
+    ax.fill_between(m_values, fit_times, total_times, alpha=0.7, color='C1', label='Score (O(nm²))')
+
+    # Also plot lines for clarity
+    ax.plot(m_values, fit_times, 'o-', color='C0', linewidth=2, markersize=6)
+    ax.plot(m_values, total_times, 's-', color='black', linewidth=2, markersize=6, label='Total')
+
+    ax.set_xlabel('Number of rated poems (m)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Time (seconds)', fontsize=12, fontweight='bold')
+    ax.set_title('Time Breakdown: Fit vs Score (Python baseline)', fontsize=14, fontweight='bold')
+    ax.legend(loc='upper left', fontsize=10)
+    ax.grid(alpha=0.3)
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=0)
+
+    # Add annotation about score time (note: these benchmarks didn't vary n)
+    ax.text(0.98, 0.02, f'Note: Score time shown for n={python_df["n_poems"].iloc[0]:,}',
+            transform=ax.transAxes, ha='right', va='bottom', fontsize=9,
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(str(output_path).replace('.png', '.pdf'), bbox_inches='tight')
+    print(f"✓ Saved {output_path}")
+    plt.close()
+
+def plot_score_backend_comparison(csv_path, output_path):
+    """Plot score backend comparison: Python (CPU) vs GPU."""
+    if not Path(csv_path).exists():
+        print(f"⚠ Score benchmark CSV not found at {csv_path}")
+        print("  Run: sbatch scripts/bench_score_backends.slurm")
+        return
+
+    df = pd.read_csv(csv_path)
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    # Get unique backends
+    backends = df['score_backend'].unique()
+
+    # Define colors and markers for each backend
+    backend_styles = {
+        'python': {'color': 'C0', 'marker': 'o', 'label': 'Python (1 thread)', 'filter': lambda x: x['num_threads'] == 1},
+        'python_mt': {'color': 'C1', 'marker': 's', 'label': 'Python (8 threads)', 'filter': lambda x: x['score_backend'] == 'python' and x['num_threads'] != 1},
+        'native_lapack': {'color': 'C2', 'marker': '^', 'label': 'Native LAPACK', 'filter': lambda x: x['score_backend'] == 'native_lapack'},
+        'gpu': {'color': 'C3', 'marker': 'D', 'label': 'GPU (CuPy)', 'filter': lambda x: x['score_backend'] == 'gpu'},
+    }
+
+    # Plot each backend
+    for backend_key, style in backend_styles.items():
+        if backend_key == 'python':
+            subset = df[df['num_threads'] == 1].copy()
+        elif backend_key == 'python_mt':
+            subset = df[(df['score_backend'] == 'python') & (df['num_threads'] != 1)].copy()
+        else:
+            subset = df[df['score_backend'] == backend_key].copy()
+
+        if len(subset) > 0:
+            subset = subset.groupby('m_rated')['score_seconds'].mean().reset_index()
+            ax.plot(subset['m_rated'], subset['score_seconds'],
+                   marker=style['marker'], linewidth=2.5, markersize=8,
+                   label=style['label'], color=style['color'])
+
+    ax.set_xlabel('Number of rated poems (m)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Score time (seconds)', fontsize=12, fontweight='bold')
+    ax.set_title('Scoring Performance: CPU vs GPU', fontsize=14, fontweight='bold')
+    ax.legend(loc='upper left', fontsize=10)
+    ax.grid(alpha=0.3)
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=0)
+
+    # Add annotation about complexity
+    n_cand = df['n_candidates'].iloc[0]
+    ax.text(0.98, 0.02, f'n = {n_cand:,} candidates\nComplexity: O(nm²)',
+            transform=ax.transAxes, ha='right', va='bottom', fontsize=9,
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(str(output_path).replace('.png', '.pdf'), bbox_inches='tight')
+    print(f"✓ Saved {output_path}")
+    plt.close()
+
 def main():
     # Find benchmark CSV
     csv_path = Path('../../results/large_scale_fit_20260406_233011.csv')
@@ -229,6 +328,11 @@ def main():
     plot_speedup_analysis(df, output_dir / 'benchmark_speedup.png')
     plot_process_scaling(df, output_dir / 'benchmark_process_scaling.png', m_target=20000)
     plot_log_log_scaling(df, output_dir / 'benchmark_loglog_scaling.png')
+    plot_time_breakdown(df, output_dir / 'benchmark_time_breakdown.png')
+
+    # Generate score backend comparison plot (if data exists)
+    score_csv = Path('../../results/score_backend_comparison.csv')
+    plot_score_backend_comparison(score_csv, output_dir / 'benchmark_score_backends.png')
 
     print()
     print("=" * 60)
@@ -240,6 +344,8 @@ def main():
     print("  - benchmark_speedup.{png,pdf}")
     print("  - benchmark_process_scaling.{png,pdf}")
     print("  - benchmark_loglog_scaling.{png,pdf}")
+    print("  - benchmark_time_breakdown.{png,pdf}")
+    print("  - benchmark_score_backends.{png,pdf} (if data exists)")
     print()
     print("Update slides to reference these figures!")
 

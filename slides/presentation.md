@@ -205,6 +205,33 @@ $$\sigma^2_q = \text{diag}(K_{qq}) - \text{diag}(v^\top v)$$
 
 ---
 
+# Time Breakdown: Fit vs Score
+
+![](figures/benchmark_time_breakdown.pdf){width=70%}
+
+**Fit dominates** for large $m$ (cubic scaling), **score dominates** for large $n$ with variance
+
+---
+
+# Hyperparameter Optimization
+
+**Kernel hyperparameters**: $\theta = (\ell, \sigma_f, \sigma_n)$
+
+- Length scale $\ell$: How far correlations extend
+- Signal variance $\sigma_f^2$: Prior belief about rating scale
+- Noise $\sigma_n^2$: Measurement noise
+
+**Optimization**: Maximize marginal likelihood
+$$\log p(y \mid X, \theta) = -\frac{1}{2} y^\top K^{-1} y - \frac{1}{2} \log|K| - \frac{m}{2}\log(2\pi)$$
+
+**Method**: L-BFGS with analytic gradients
+
+**Cost**: $O(m^3)$ per evaluation (same as fit)
+
+**When**: Before interactive session or periodically during use
+
+---
+
 # Active Learning: Acquisition Functions
 
 **Exploitation** (recommend favorites):
@@ -443,83 +470,56 @@ dtrsv_(...);  // Triangular solve
 
 ---
 
-# Live Demo
+# Benchmark: Score Backend Comparison
 
-**Demo flow**:
+![](figures/benchmark_score_backends.pdf){width=70%}
 
-1. Start: `python scripts/app/interactive_cli.py`
-2. Rate poems → See posterior update
-3. Exploit (`e`): max_mean, UCB, Thompson
-4. Explore (`x`): max_variance, spatial
-5. Visualize: Posterior heatmap on 2D projection
+**GPU wins for scoring**: 15× faster than single-threaded Python at $m=5{,}000$
 
-**Watch for**:
+---
 
-- Posterior mean evolution
-- Uncertainty shrinking near rated poems
-- Exploit vs explore behavior
-- Real-time performance
+# Posterior Visualization
+
+![](figures/posterior_heatmap.pdf){width=70%}
+
+GP posterior mean on 2D UMAP projection of poem embeddings
+
+**White dots**: Rated poems | **Colors**: Predicted preference (cold = low, hot = high)
+
+---
+
+# Try It Yourself!
+
+**Quick start**:
+
+```bash
+# 1. Setup environment
+bash scripts/bootstrap_env.sh
+source scripts/activate_env.sh
+
+# 2. Get shared data (or build from scratch)
+bash scripts/setup_shared_data.sh
+
+# 3. Run interactive CLI
+python scripts/app/interactive_cli.py
+```
+
+**Features**:
+- Rate poems → GP updates in real-time
+- Exploit (`e`): Get recommendations (UCB, Thompson)
+- Explore (`x`): Ask informative questions (max_variance)
+- Visualize: Posterior heatmaps
+
+**Repository**: `github.com/cgumb/poetry` (or share link)
+
+**Questions?**
 
 ---
 
 # Future Work
 
-**Model improvements**:
+**Model**: Full Bayesian hyperparameters (MCMC), learned features (NN + GP), alternative kernels
 
-- Full Bayesian inference on kernel hyperparameters (MCMC)
-- Learn features from embeddings with neural networks before GP
-- Different embedding models (transformers, LLMs)
-- Alternative kernels (Matérn, periodic, neural kernels)
+**Active learning**: RL for acquisition, batch queries, contextual bandits
 
-**Active learning**:
-
-- Reinforcement learning for acquisition functions
-- Batch acquisition (recommend multiple poems at once)
-- Contextual bandits for session-level optimization
-
-**Computational**:
-
-- Sparse GP approximations (inducing points, $O(nm^2) \to O(nm)$)
-- GPU-accelerated kernel assembly
-- Distributed scoring for large $n$
-
----
-
-# Key Takeaways
-
-**Modeling**:
-
-- Ridge → Dual → Kernels → GP (systematic derivation)
-- Posterior gives mean **and** variance (uncertainty matters!)
-
-**Computation**:
-
-- Fit: $O(m^3)$ Cholesky (scales with rated set)
-- Score: $O(nm^2)$ variance (scales with candidates × uncertainty)
-- No single backend wins everywhere (problem size dependent)
-
-**HPC Solutions**:
-
-- PyBind11: Overhead elimination ($m < 5{,}000$)
-- ScaLAPACK: Distributed for $m > 7{,}000$ (4.3× speedup at $m=20{,}000$)
-- GPU: Parallel variance ($n$ large)
-
-**Practical lessons**:
-
-- Measure, don't guess
-- Environment configuration matters
-- Overhead vs compute tradeoffs are real
-
----
-
-# Questions?
-
-**Repository**: `https://github.com/...` (or provide link)
-
-**Documentation**:
-
-- `docs/METHOD_NARRATIVE.md` - Full GP derivation
-- `docs/BENCHMARKING_GUIDE.md` - Performance analysis
-- `docs/NATIVE_HPC_ROADMAP.md` - Implementation details
-
-**Try it**: `python scripts/app/interactive_cli.py`
+**Computational**: Sparse GPs (inducing points), GPU kernel assembly, distributed scoring
