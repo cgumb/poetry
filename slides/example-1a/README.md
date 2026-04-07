@@ -1,83 +1,80 @@
-# Example 1a: Quickstart & Toy GP Visualization
+# Example 1a: Quickstart + 2D Toy GP
 
-**Goal**: Get environment running and see a simple 2D GP example.
+**Goal**: Get environment running, visualize simple 2D GP.
 
-## Step 1: Clone Repository
+---
 
-From the **login node**:
+## Quickstart Commands
 
+**On login node**:
 ```bash
+# Clone repository
 git clone https://github.com/cgumb/poetry.git
 cd poetry
-```
 
-## Step 2: Get Interactive Compute Node
-
-```bash
-# CPU node (for this example)
+# Get interactive compute node (90 min)
 srun --pty -p general -N1 -n8 -t 90 bash
 ```
 
-## Step 3: Bootstrap Environment
-
-**On the compute node**:
-
+**On compute node**:
 ```bash
 cd poetry
 
-# Setup Python environment
+# Bootstrap environment
 bash scripts/bootstrap_venv.sh
 source scripts/activate_env.sh
 
 # Build native code
 make native-build
 
-# Get shared data
+# Get shared data (~100MB)
 bash scripts/setup_shared_data.sh
-```
 
-This takes ~5 minutes.
-
-## Step 4: Environment Check
-
-```bash
-# Check Python
+# Verify setup
 python -c "import poetry_gp; print('✓ poetry_gp installed')"
-
-# Check data
 ls -lh data/shared/
-
-# Check native build
 ls -lh native/build/release/scalapack_gp_fit
 ```
 
-Expected: `✓ poetry_gp installed`, data files, and executable present.
+**Expected**: `✓ poetry_gp installed`, data files, executable present.
 
-## Step 5: Visualize 2D GP
+---
 
-Run a toy 2D example to see how GPs work:
+## Visualize 2D GP
 
 ```bash
+# Run toy GP example
 python slides/example-1a/visualize_2d_gp.py
+
+# Check output
+ls -lh slides/example-1a/gp_2d_example.png
 ```
 
-This creates `slides/example-1a/gp_2d_example.png` showing:
-- **Colors**: GP posterior mean (predicted function value)
-- **Large dots**: Training observations
-- **Contours**: Iso-lines of posterior mean
+Creates visualization showing GP posterior mean with training points.
 
-**Key insight**: The GP interpolates smoothly between observations, with uncertainty growing in unexplored regions.
+---
 
-## Troubleshooting
+## Next
 
-**Problem**: `poetry_gp` not found
-- **Solution**: Run `source scripts/activate_env.sh`
+✅ Environment ready! Continue to **Example 1b** (interactive CLI).
 
-**Problem**: Native build fails
-- **Solution**: Make sure you're on CPU node (not GPU)
+---
 
-## Next Steps
+## GPU Setup (Alternative)
 
-✅ **Environment ready!**
+If using GPU node instead:
 
-Continue to **Example 1b** to play with the interactive CLI (rate poems, get recommendations, visualize your preferences).
+```bash
+# On login node
+srun --pty -p gpu -N1 --gres=gpu:1 -t 90 bash
+
+# On GPU node
+cd poetry
+bash scripts/bootstrap_venv.sh --gpu
+source scripts/activate_env.sh --gpu
+# Skip make native-build on GPU
+bash scripts/setup_shared_data.sh
+
+# Verify GPU
+python -c "import cupy as cp; print(f'✓ CuPy {cp.__version__}')"
+```
