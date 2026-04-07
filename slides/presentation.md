@@ -474,31 +474,20 @@ GP posterior mean on 2D UMAP projection of poem embeddings
 
 # Try It Yourself!
 
-```bash
-# 1. Clone repository
-git clone https://github.com/cgumb/poetry.git && cd poetry
+**Repository**: `https://github.com/cgumb/poetry`
 
-# 2. Get interactive node (90 minutes)
-srun --pty -p general -N1 -n8 -t 90 bash     # CPU node
-srun --pty -p gpu -N1 --gres=gpu:1 -t 90 bash  # GPU node
+**Four guided examples** in `slides/example-{1,2,3,4}/`:
 
-# 3. Bootstrap environment
-bash scripts/bootstrap_venv.sh              # CPU
-bash scripts/bootstrap_venv.sh --gpu        # GPU
-source scripts/activate_env.sh              # CPU
-source scripts/activate_env.sh --gpu        # GPU
+1. **Quickstart**: Environment setup + sanity check
+2. **Fit benchmark**: Small GP fit + 2D visualization
+3. **Score benchmark**: CPU vs GPU comparison
+4. **Interactive CLI**: Rate poems, explore/exploit, visualize posterior
 
-# 4. Build native code (CPU only)
-make native-build
+**Each has README.md with step-by-step instructions**
 
-# 5. Get shared data
-bash scripts/setup_shared_data.sh
+Start: `slides/example-1/README.md`
 
-# 6. Run interactive CLI
-python scripts/app/interactive_cli.py
-```
-
-**Repository**: `https://github.com/cgumb/poetry` | **Questions?**
+**Questions?**
 
 ---
 
