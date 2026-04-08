@@ -139,3 +139,25 @@ else
   echo "  Python: $(which python)"
   echo "  Pip: $(which pip)"
 fi
+
+#############################################################################
+# Load .env file for configuration (e.g., VIZ_URL_PREFIX for CLI)
+#############################################################################
+
+# Copy .env.example if .env doesn't exist
+if [[ ! -f "$REPO_DIR/.env" ]] && [[ -f "$REPO_DIR/.env.example" ]]; then
+  echo ""
+  echo "Creating .env from .env.example..."
+  cp "$REPO_DIR/.env.example" "$REPO_DIR/.env"
+  echo "✓ Created .env (edit this file to customize settings)"
+fi
+
+# Source .env if it exists
+if [[ -f "$REPO_DIR/.env" ]]; then
+  set -a  # Automatically export all variables
+  source "$REPO_DIR/.env"
+  set +a
+  if [[ -n "${VIZ_URL_PREFIX:-}" ]]; then
+    echo "✓ Loaded .env (VIZ_URL_PREFIX set for clickable visualization links)"
+  fi
+fi

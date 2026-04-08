@@ -33,27 +33,11 @@ source scripts/activate_env.sh              # CPU
 source scripts/activate_env.sh --gpu        # GPU (if on GPU node)
 ```
 
-## Step 3: Configure Visualization URLs (Optional)
+## Step 3: Launch CLI
 
-To enable clickable links that open directly in Open OnDemand:
+**Note**: The activation script automatically creates `.env` from `.env.example` if it doesn't exist, enabling clickable Open OnDemand links in visualization output. To customize the URL prefix, edit `.env` after activation.
 
-```bash
-# Copy example config
-cp .env.example .env
-
-# Edit .env and set:
-export VIZ_URL_PREFIX=https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs
-
-# Source it before running CLI
-source .env
-```
-
-Or set inline when launching:
-```bash
-VIZ_URL_PREFIX=https://ood.huit.harvard.edu/pun/sys/dashboard/files/fs python scripts/app/interactive_cli.py
-```
-
-## Step 4: Launch CLI
+## Step 4: Run the CLI
 
 **Basic usage**:
 ```bash
